@@ -30,13 +30,20 @@ public class WebSocketManager : MonoBehaviour
         public float Reward;
         public bool Done;
         public float CaptureRatio;
+        public float N0, N1, N2, N3, N4, N5; // 주변 6셀
     }
 
     [Serializable] class ActionMessage { public List<UnitAction> units; }
     [Serializable] class UnitAction { public int id; public int action; }
     [Serializable] class StateMessage { public List<UnitState> units; public float captureRatio; }
-    [Serializable] class UnitState { public int id; public int col; public int row; public int yaw; public float reward; public bool done; }
-
+    [Serializable]
+    class UnitState
+    {
+        public int id, col, row, yaw;
+        public float reward, captureRatio;
+        public bool done;
+        public float n0, n1, n2, n3, n4, n5;
+    }
     void Awake()
     {
         ActionQueue = new NativeQueue<ActionData>(Allocator.Persistent);

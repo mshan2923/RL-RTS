@@ -77,4 +77,33 @@ public static class HexMetrics
         return cell.x >= minCol && cell.x <= maxCol &&
                cell.y >= minRow && cell.y <= maxRow;
     }
+
+    public const int MapWidth = 10;
+    public const int MapHeight = 10;
+
+    public static int2 GetNeighborOffset(int2 current, int direction)
+    {
+        int2[][] dirs = {
+        new int2[] { // 짝수 행
+            new int2(+1,  0),
+            new int2(+1, -1),
+            new int2( 0, -1),
+            new int2(-1,  0),
+            new int2( 0, +1),
+            new int2(+1, +1),
+        },
+        new int2[] { // 홀수 행
+            new int2(+1,  0),
+            new int2( 0, -1),
+            new int2(-1, -1),
+            new int2(-1,  0),
+            new int2(-1, +1),
+            new int2( 0, +1),
+        }
+    };
+
+        int parity = current.y & 1;
+        return current + dirs[parity][direction % 6];
+    }
+
 }
