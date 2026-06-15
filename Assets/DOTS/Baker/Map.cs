@@ -22,5 +22,6 @@ class MapBaker : Baker<Map>
             Radius = authoring.Radius
         });
 
+
     }
 }

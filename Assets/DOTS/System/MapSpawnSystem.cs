@@ -28,10 +28,11 @@ public partial class MapSpawnerSystem : SystemBase
 
                 var pos = HexMetrics.OffsetToWorld(new int2(x, z)) - new float3(0, 0.5f, 0);
 
-                // 2offset
+                bool isWall = x == 0 || x == config.Width - 1 || z == 0 || z == config.Height - 1;
+
                 // 3. 문법 수정: SetComponentData 사용
                 ecb.SetComponent(tile, LocalTransform.FromPosition(pos));
-                ecb.SetComponent(tile, new HexTile { X = x, Z = z });
+                ecb.SetComponent(tile, new HexTile { X = x, Z = z, OwnerID = isWall ? GroupType.Wall : GroupType.None, IsOccupied = false, JustCaptured = false });
                 ecb.AddComponent(tile, new URPMaterialPropertyBaseColor { Value = new float4(1, 1, 1, 1) });
             }
         }

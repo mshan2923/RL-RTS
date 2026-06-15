@@ -7,5 +7,11 @@ public struct UnitComponent : IComponentData
 }
 public struct MoveTargetComponent : IComponentData
 {
+    public float PrevBaseDist;
     public float3 Target;
+}
+public struct DetectWallNormalize : IComponentData
+{
+    public float n0, n1, n2, n3, n4, n5;
+    public bool isWall;
 }

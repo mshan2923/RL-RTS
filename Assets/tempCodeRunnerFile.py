@@ -33,36 +33,28 @@ class PPONetwork(nn.Module):
 class PPO:
     def __init__(self, state_dim=6, action_dim=6, mode=Mode.TRAIN):
         self.net       = PPONetwork(state_dim, action_dim)
-        self.optimizer = optim.Adam(self.net.parameters(), lr=0.0003)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=0.05)
         self.mode      = mode
         self.clip      = 0.2
         self.gamma     = 0.99
         self.lam       = 0.95
-        self.entropy_coef = 0.05  # 일단 이 정도로 시작해!
+        self.entropy_coef = 0.01  # 일단 이 정도로 시작해!
         self.buffers   = {}
         self._load()
-        
-        test_state = [0.5]*9
-        counts = {}
-        for _ in range(100):
-            a, _, _ = self.select_action(test_state)
-            counts[a] = counts.get(a, 0) + 1
-        print(f"[PPO] 초기 action 분포: {counts}")
 
     def _load(self):
-        print("[PPO] 로드 시작 주석 처리")
-        # try:
-        #     self.net.load_state_dict(torch.load(MODEL_PATH))
-        #     print(f"[PPO] 모델 로드: {MODEL_PATH}")
-        # except:
-        #     print("[PPO] 새로 학습 시작")
+        try:
+            self.net.load_state_dict(torch.load(MODEL_PATH))
+            print(f"[PPO] 모델 로드: {MODEL_PATH}")
+        except:
+            print("[PPO] 새로 학습 시작")
 
     def _save(self):
         torch.save(self.net.state_dict(), MODEL_PATH)
         print(f"[PPO] 저장: {MODEL_PATH}")
 
     def save_onnx(self, path="ppo_hex.onnx"):
-        dummy = (torch.FloatTensor([[0] * 9]),)
+        dummy = (torch.FloatTensor([[0] * 6]),)
         torch.onnx.export(
             self.net, dummy, path,
             input_names=["state"],
@@ -133,7 +125,7 @@ class PPO:
             surr2       = torch.clamp(ratio, 1-self.clip, 1+self.clip) * advs
             policy_loss = -torch.min(surr1, surr2).mean()
             value_loss  = nn.MSELoss()(values.squeeze(), returns)
-            loss = policy_loss + 0.5 * value_loss - self.entropy_coef * entropy 
+            loss        = policy_loss + 0.5 * value_loss - 0.01 * entropy
 
             self.optimizer.zero_grad()
             loss.backward()

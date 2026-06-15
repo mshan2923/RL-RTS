@@ -24,6 +24,8 @@ partial struct MoveToTarget : ISystem
             else
             {
                 trans.ValueRW.Position += math.normalize(move.ValueRO.Target - trans.ValueRO.Position) * moveLength;
+                trans.ValueRW.Rotation = quaternion.LookRotationSafe(
+                    math.normalize(move.ValueRO.Target - trans.ValueRO.Position), math.up());
             }
         }
     }

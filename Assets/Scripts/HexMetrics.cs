@@ -78,32 +78,45 @@ public static class HexMetrics
                cell.y >= minRow && cell.y <= maxRow;
     }
 
-    public const int MapWidth = 10;
-    public const int MapHeight = 10;
 
-    public static int2 GetNeighborOffset(int2 current, int direction)
+    public static int2 GetNeighborOffset(int2 current, int rot)
     {
-        int2[][] dirs = {
-        new int2[] { // 짝수 행
-            new int2(+1,  0),
-            new int2(+1, -1),
-            new int2( 0, -1),
-            new int2(-1,  0),
-            new int2( 0, +1),
-            new int2(+1, +1),
-        },
-        new int2[] { // 홀수 행
-            new int2(+1,  0),
-            new int2( 0, -1),
-            new int2(-1, -1),
-            new int2(-1,  0),
-            new int2(-1, +1),
-            new int2( 0, +1),
-        }
-    };
+        bool inner = (current.y & 1) == 0;
 
-        int parity = current.y & 1;
-        return current + dirs[parity][direction % 6];
+        if (rot >= 6) rot %= 6;
+
+        int2 result = current;
+
+        switch (rot)
+        {
+            case 0:
+                result = new int2(inner ? current.x : current.x + 1, current.y + 1);
+                break;
+            case 1:
+                result = new int2(current.x + 1, current.y);
+                break;
+            case 2:
+                result = new int2(inner ? current.x : current.x + 1, current.y - 1);
+                break;
+            case 3:
+                result = new int2(inner ? current.x - 1 : current.x, current.y - 1);
+                break;
+            case 4:
+                result = new int2(current.x - 1, current.y);
+                break;
+            case 5:
+                result = new int2(inner ? current.x - 1 : current.x, current.y + 1);
+                break;
+        }
+
+        return result;
     }
 
+    public static int2 GetNeighborOffset(int2 current, float degrees)
+    {
+        int rot = HexMetrics.WorldYawToIndex(degrees);
+        return GetNeighborOffset(current, rot);
+    }
 }
+
+

@@ -13,6 +13,7 @@ public partial class HexTileViewSystem : SystemBase
             {
                 GroupType.Ally => new float4(0.2f, 0.6f, 1.0f, 1f),
                 GroupType.Enmy => new float4(1.0f, 0.3f, 0.3f, 1f),
+                GroupType.Wall => new float4(0f, 0f, 0f, 1f),
                 _ => new float4(0.5f, 0.5f, 0.5f, 1f)
             };
 

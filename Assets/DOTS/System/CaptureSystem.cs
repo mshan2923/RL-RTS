@@ -34,6 +34,7 @@ partial struct CaptureJob : IJobEntity
         var key = new int2(tile.X, tile.Z);
         if (!UnitCellMap.ContainsKey(key)) return;
         if (tile.OwnerID == GroupType.Ally) return;
+        if (tile.OwnerID == GroupType.Wall) return;
 
         tile.OwnerID = GroupType.Ally;
         tile.IsOccupied = true;

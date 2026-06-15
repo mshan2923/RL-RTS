@@ -20,5 +20,14 @@ class UnitBaker : Baker<Unit>
         {
             Target = authoring.transform.position
         });
+        AddComponent(entity, new DetectWallNormalize
+        {
+            n0 = 1,
+            n1 = 1,
+            n2 = 1,
+            n3 = 1,
+            n4 = 1,
+            n5 = 1
+        });
     }
 }

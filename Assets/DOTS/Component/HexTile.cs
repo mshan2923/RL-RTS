@@ -8,9 +8,15 @@ public struct HexTile : IComponentData
     public GroupType OwnerID; // 0:중립, 1:플레이어, 2:적
     public bool IsOccupied;
     public bool JustCaptured;
+
 }
+
 
 public enum GroupType : byte
 {
-    None, Ally, Enmy
+    None = 1,  // 001
+    Ally = 2,  // 010
+    Enmy = 4,   // 100
+    Wall = 8,   // 1000
 }
+
