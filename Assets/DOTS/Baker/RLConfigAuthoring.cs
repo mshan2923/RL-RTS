@@ -5,6 +5,7 @@ public class RLConfigAuthoring : MonoBehaviour
 {
     public int MaxSteps = 200;
     public float DetectionRange = 10f;
+    public float CaptureThreshold = 0.8f;
     public bool IsInferenceMode = false;
 
     class Baker : Baker<RLConfigAuthoring>
@@ -16,6 +17,7 @@ public class RLConfigAuthoring : MonoBehaviour
             {
                 MaxSteps = authoring.MaxSteps,
                 DetectionRange = authoring.DetectionRange,
+                CaptureThreshold = authoring.CaptureThreshold,
                 IsInferenceMode = authoring.IsInferenceMode
             });
         }
@@ -26,5 +28,6 @@ public struct RLConfig : IComponentData
 {
     public int MaxSteps;
     public float DetectionRange;
+    public float CaptureThreshold;
     public bool IsInferenceMode;
 }

@@ -1,4 +1,5 @@
 using Unity.Entities;
+using Unity.Mathematics;
 using UnityEngine;
 
 class Unit : MonoBehaviour
@@ -28,6 +29,11 @@ class UnitBaker : Baker<Unit>
             n3 = 1,
             n4 = 1,
             n5 = 1
+        });
+        AddComponent(entity, new TargetInfo
+        {
+            Position = float3.zero,
+            IsActive = false,
         });
     }
 }

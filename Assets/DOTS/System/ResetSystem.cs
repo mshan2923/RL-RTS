@@ -73,6 +73,7 @@ public partial struct ResetSystem : ISystem
             transform.Position = pos;
             moveTarget.Target = pos;
             moveTarget.PrevBaseDist = 0f;
+            moveTarget.PrevTargetDist = 0f; // PrevTargetDist 초기화
         }
     }
 }

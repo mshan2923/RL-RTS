@@ -10,6 +10,8 @@ import sys
 import threading
 
 MODEL_PATH = "ppo_hex.pt"
+STATE_DIM = 12  # 기존 9 + [TargetDist, TargetDir, TargetActive] 추가분
+ACTION_DIM = 6  # 이동 및 기타 액션
 
 class Mode(Enum):
     TRAIN     = "train"
@@ -31,7 +33,7 @@ class PPONetwork(nn.Module):
         return self.policy(shared), self.value(shared)
 
 class PPO:
-    def __init__(self, state_dim=6, action_dim=6, mode=Mode.TRAIN):
+    def __init__(self, state_dim = STATE_DIM, action_dim = ACTION_DIM, mode=Mode.TRAIN):
         self.net       = PPONetwork(state_dim, action_dim)
         self.optimizer = optim.Adam(self.net.parameters(), lr=0.0003)
         self.mode      = mode
@@ -42,7 +44,7 @@ class PPO:
         self.buffers   = {}
         self._load()
         
-        test_state = [0.5]*9
+        test_state = [0.5] * STATE_DIM
         counts = {}
         for _ in range(100):
             a, _, _ = self.select_action(test_state)
@@ -50,26 +52,36 @@ class PPO:
         print(f"[PPO] 초기 action 분포: {counts}")
 
     def _load(self):
-        print("[PPO] 로드 시작 주석 처리")
-        # try:
-        #     self.net.load_state_dict(torch.load(MODEL_PATH))
-        #     print(f"[PPO] 모델 로드: {MODEL_PATH}")
-        # except:
-        #     print("[PPO] 새로 학습 시작")
+        try:
+            self.net.load_state_dict(torch.load(MODEL_PATH))
+            print(f"[PPO] 모델 로드: {MODEL_PATH}")
+        except FileNotFoundError:
+            print(f"[PPO] 모델 파일 '{MODEL_PATH}'을 찾을 수 없습니다. 새로 학습을 시작합니다.")
+        except Exception as e:
+            print(f"[PPO] 모델 로드 중 오류 발생: {e}. 새로 학습을 시작합니다.")
 
     def _save(self):
         torch.save(self.net.state_dict(), MODEL_PATH)
         print(f"[PPO] 저장: {MODEL_PATH}")
 
     def save_onnx(self, path="ppo_hex.onnx"):
-        dummy = (torch.FloatTensor([[0] * 9]),)
-        torch.onnx.export(
-            self.net, dummy, path,
-            input_names=["state"],
-            output_names=["policy", "value"],
-            opset_version=17
-        )
-        print(f"[PPO] ONNX 저장: {path}")
+            # 1. 더미 텐서 생성 (배치 사이즈 1, STATE_DIM 12)
+            dummy = torch.randn(1, STATE_DIM)
+            
+            # 2. 튜플 명시 (dummy 뒤에 쉼표 필수!)
+            args = (dummy,) 
+            
+            # 3. export 실행
+            torch.onnx.export(
+                self.net, 
+                args,  # 튜플로 전달
+                path,
+                input_names=["state"],
+                output_names=["policy", "value"],
+                opset_version=17,
+                dynamic_axes={'state': {0: 'batch_size'}}
+            )
+            print(f"[PPO] ONNX 저장 완료: {path} (Input Shape: {dummy.shape})")
 
     def select_action(self, state):
         t = torch.FloatTensor(state).unsqueeze(0)
@@ -145,7 +157,7 @@ class PPO:
 
 # ── 서버 ──────────────────────────────────────────────
 mode = Mode.INFERENCE if "--infer" in sys.argv else Mode.TRAIN
-ppo  = PPO(state_dim=9, action_dim=6, mode=mode)
+ppo  = PPO(state_dim= STATE_DIM, action_dim= ACTION_DIM, mode=mode)
 
 async def handler(websocket):
     print("[WS] Unity 연결됨")
@@ -159,7 +171,10 @@ async def handler(websocket):
                 unit["baseDir"],
                 unit["captureRatio"],
                 unit["n0"], unit["n1"], unit["n2"],
-                unit["n3"], unit["n4"], unit["n5"]
+                unit["n3"], unit["n4"], unit["n5"],
+                float(unit["TargetDist"]),
+                float(unit["TargetDir"]),
+                float(unit["TargetActive"]) # 유니티에서 보낸 0 or 1
             ]
 
             action, log_prob, value = ppo.select_action(state)

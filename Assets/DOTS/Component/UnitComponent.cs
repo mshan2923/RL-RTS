@@ -8,7 +8,9 @@ public struct UnitComponent : IComponentData
 public struct MoveTargetComponent : IComponentData
 {
     public float PrevBaseDist;
+    public int command;
     public float3 Target;
+    public float PrevTargetDist; // 목표 타일과의 이전 거리
 }
 public struct DetectWallNormalize : IComponentData
 {

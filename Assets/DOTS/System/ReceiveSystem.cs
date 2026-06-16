@@ -75,6 +75,7 @@ partial struct ApplyActionJob : IJobEntity
     {
         if (!ActionMap.TryGetValue(unit.Id, out int action)) return;
 
+        moveTarget.command = action;
         float yaw = action * 60f;
         var targetCell = HexMetrics.WorldToOffsetWithYaw(transform.Position, yaw);
 

@@ -8,6 +8,8 @@ using UnityEngine;
 public partial struct SendSystem : ISystem
 {
     private int _step;
+    private float _prevCaptureRatio;
+
     private EntityQuery _tileQuery;
     private EntityQuery _baseQuery;
     private EntityQuery _unitQuery;
@@ -22,7 +24,7 @@ public partial struct SendSystem : ISystem
         _baseQuery = new EntityQueryBuilder(Allocator.Temp)
             .WithAll<BaseComponent>().Build(ref state);
         _unitQuery = new EntityQueryBuilder(Allocator.Temp)
-            .WithAll<LocalTransform, UnitComponent, DetectWallNormalize, MoveTargetComponent>().Build(ref state);
+            .WithAll<LocalTransform, UnitComponent, DetectWallNormalize, MoveTargetComponent, TargetInfo>().Build(ref state);
     }
 
     public void OnUpdate(ref SystemState state)
@@ -50,6 +52,9 @@ public partial struct SendSystem : ISystem
             tileMap.TryAdd(new int2(tile.X, tile.Z), tile.OwnerID);
         }
         float captureRatio = total > 0 ? (float)captured / total : 0f;
+        float captureGain = captureRatio - _prevCaptureRatio; // 이번 프레임 점령 증가량
+
+        Debug.Log($"Capture : {captureGain}");
 
         // 기지 위치
         float3 basePos = basement.Position;
@@ -65,6 +70,9 @@ public partial struct SendSystem : ISystem
         var units = _unitQuery.ToComponentDataArray<UnitComponent>(Allocator.Temp);
         var unitDetectWall = _unitQuery.ToComponentDataArray<DetectWallNormalize>(Allocator.Temp);
         var moveTarget = _unitQuery.ToComponentDataArray<MoveTargetComponent>(Allocator.Temp);
+        var targetInfo = _unitQuery.ToComponentDataArray<TargetInfo>(Allocator.Temp);
+        var entities = _unitQuery.ToEntityArray(Allocator.Temp);
+
 
         // ── Pass 1: 도착 판정 (전체 유닛 기준 done 결정) ──
         bool arrived = false;
@@ -99,27 +107,54 @@ public partial struct SendSystem : ISystem
             float baseDist = math.length(toBase) / maxDist; // 정규화
             float baseDir = math.degrees(math.atan2(toBase.x, toBase.z)) / 360f; // 정규화
 
-            #region Reward
-            float currentDist = math.length(toBase);
+            float3 toTarget = targetInfo[i].Position - transforms[i].Position;
+            float targetDist = math.length(toTarget) / maxDist;
+            float targetDir = math.degrees(math.atan2(toTarget.x, toTarget.z)) / 360f;
 
-            // 1. 방향 일치 (기지를 바라보는가?)
-            float3 forward = math.forward(transforms[i].Rotation);
-            float alignment = math.dot(forward, math.normalize(toBase));
+            float currentDistToBase = math.length(toBase);
+            float reward = 0f;
 
-            // 2. 거리 페널티 (정규화된 baseDist 사용)
-            // float reward = (alignment * 1.0f) - (baseDist * 1.0f);
-            float reward = (moveTarget[i].PrevBaseDist - currentDist) * 50.0f;
+            // Reward for moving towards the capture target
+            if (targetInfo[i].IsActive)
+            {
+                // 목표 타일에 가까워질수록 보상 (더 높은 가중치로 개별 탐사 유도)
+                reward += (moveTarget[i].PrevTargetDist - targetDist) * 120.0f;
+            }
+            else
+            {
+                // 목표 타일이 없을 경우, 기지에 가까워질수록 보상 (상대적으로 낮은 가중치)
+                reward += (moveTarget[i].PrevBaseDist - currentDistToBase) * 20.0f;
+            }
 
-            if (i == 0)
-                Debug.Log($"{moveTarget[i].PrevBaseDist} - {currentDist} = {reward / 50f}");
-            #endregion
+            // 벽/맵 경계 페널티: 선택한 방향의 벽 센서(n0~n5)가 너무 가까우면 페널티
+            float[] wallSensors = { unitDetectWall[i].n0, unitDetectWall[i].n1, unitDetectWall[i].n2,
+                                    unitDetectWall[i].n3, unitDetectWall[i].n4, unitDetectWall[i].n5 };
 
-            // 도착 시 큰 보상
-            if (currentDist < 1.0f)
+            int lastAction = moveTarget[i].command;
+            if (lastAction >= 0 && lastAction < 6)
+            {
+                // 해당 방향의 센서값이 0.2 미만(거의 앞이 벽)일 때 페널티를 줄여서 덜 튕기도록
+                if (wallSensors[lastAction] < 0.2f) reward -= 1.0f;
+            }
+            if (unitDetectWall[i].isWall) reward -= 0.5f; // 현재 벽 위에 있어도 페널티를 줄임
+            else reward += 0.005f; // 벽이 아닌 곳에 있으면 아주 작은 보상 (움직임 장려)
+
+            // 타일 점령 증가량에 대한 보상 (전역적이지만, 학습에 도움)
+            reward += captureGain * 100.0f; // 미탐사 지역 탐사 시 보상을 줄여 개별 유닛의 목표 추구 유도
+
+            // 기지 도착 시 큰 보상 (여전히 중요한 목표일 경우)
+            if (currentDistToBase < 1.0f)
                 reward += 10.0f;
 
             // 시간 페널티
             reward -= 0.01f;
+
+            // 다음 스텝을 위해 현재 거리 정보 업데이트
+            var target = moveTarget[i];
+            target.PrevBaseDist = currentDistToBase;
+            target.PrevTargetDist = targetDist;
+            state.EntityManager.SetComponentData(entities[i], target);
+
 
             manager.StateQueue.Enqueue(new WebSocketManager.StateData
             {
@@ -137,7 +172,11 @@ public partial struct SendSystem : ISystem
                 N2 = unitDetectWall[i].n2,
                 N3 = unitDetectWall[i].n3,
                 N4 = unitDetectWall[i].n4,
-                N5 = unitDetectWall[i].n5
+                N5 = unitDetectWall[i].n5,
+
+                TargetActive = targetInfo[i].IsActive ? 1f : 0f,
+                TargetDist = math.clamp(targetDist, 0, 1f),
+                TargetDir = math.clamp(targetDir, 0, 1f)
             });
         }
 
@@ -150,6 +189,7 @@ public partial struct SendSystem : ISystem
             tiles[i] = t;
         }
         _tileQuery.CopyFromComponentDataArray(tiles);
+        _prevCaptureRatio = captureRatio;
 
         tileArray.Dispose();
         tileMap.Dispose();
@@ -158,5 +198,7 @@ public partial struct SendSystem : ISystem
         tiles.Dispose();
         unitDetectWall.Dispose();
         moveTarget.Dispose();
+        targetInfo.Dispose();
+        entities.Dispose();
     }
 }
