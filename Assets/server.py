@@ -8,6 +8,7 @@ from torch.distributions import Categorical
 from enum import Enum
 import sys
 import threading
+import os
 
 MODEL_PATH = "ppo_hex.pt"
 STATE_DIM = 12  # 기존 9 + [TargetDist, TargetDir, TargetActive] 추가분
@@ -35,12 +36,12 @@ class PPONetwork(nn.Module):
 class PPO:
     def __init__(self, state_dim = STATE_DIM, action_dim = ACTION_DIM, mode=Mode.TRAIN):
         self.net       = PPONetwork(state_dim, action_dim)
-        self.optimizer = optim.Adam(self.net.parameters(), lr=0.0003)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=0.00005)
         self.mode      = mode
         self.clip      = 0.2
-        self.gamma     = 0.99
+        self.gamma     = 0.95
         self.lam       = 0.95
-        self.entropy_coef = 0.05  # 일단 이 정도로 시작해!
+        self.entropy_coef = 0.25  # 탐색 강도를 약간 더 높여서 고착화 방지
         self.buffers   = {}
         self._load()
         
@@ -65,35 +66,51 @@ class PPO:
         print(f"[PPO] 저장: {MODEL_PATH}")
 
     def save_onnx(self, path="ppo_hex.onnx"):
-            # 1. 더미 텐서 생성 (배치 사이즈 1, STATE_DIM 12)
+            # 기존에 생성된 .onnx.data 파일이 있다면 충돌 방지를 위해 먼저 삭제
+            data_path = path + ".data"
+            if os.path.exists(data_path):
+                os.remove(data_path)
+
+            self.net.eval()
             dummy = torch.randn(1, STATE_DIM)
             
-            # 2. 튜플 명시 (dummy 뒤에 쉼표 필수!)
-            args = (dummy,) 
-            
-            # 3. export 실행
             torch.onnx.export(
                 self.net, 
-                args,  # 튜플로 전달
+                (dummy,), 
                 path,
+                export_params=True,       
+                external_data=False, # <- [추가] 가중치를 외부 파일로 분리하지 않고 내부에 강제 포함!
+                opset_version=15,          
+                do_constant_folding=True, 
                 input_names=["state"],
                 output_names=["policy", "value"],
-                opset_version=17,
-                dynamic_axes={'state': {0: 'batch_size'}}
+                dynamic_axes={
+                    'state': {0: 'batch_size'},
+                    'policy': {0: 'batch_size'},
+                    'value': {0: 'batch_size'}
+                }
             )
-            print(f"[PPO] ONNX 저장 완료: {path} (Input Shape: {dummy.shape})")
+            print(f"[PPO] ONNX 저장 완료 (단일 파일 강제): {path}")
 
     def select_action(self, state):
         t = torch.FloatTensor(state).unsqueeze(0)
         if self.mode == Mode.INFERENCE:
             with torch.no_grad():
                 logits, _ = self.net(t)
+                
                 action = logits.argmax(dim=-1)
             return action.item(), 0.0, 0.0
         else:
             logits, value = self.net(t)
+        
+            
             dist   = Categorical(logits=logits)
-            action = dist.sample()
+            
+            if self.mode == Mode.TRAIN and torch.rand(1).item() < 0.15:
+                action = torch.randint(0, 6, (1,)) # 0~5 중 완전 랜덤
+            else:
+                action = dist.sample()
+                
             return action.item(), dist.log_prob(action).item(), value.item()
 
     def store(self, unit_id, state, action, reward, done, log_prob, value):
@@ -134,7 +151,7 @@ class PPO:
         returns = advs + torch.FloatTensor(buf["values"])
         advs    = (advs - advs.mean()) / (advs.std() + 1e-8)
 
-        for _ in range(4):
+        for _ in range(5): # 업데이트 횟수 약간 증가
             logits, values = self.net(states)
             dist     = Categorical(logits=logits)
             new_lp   = dist.log_prob(actions)

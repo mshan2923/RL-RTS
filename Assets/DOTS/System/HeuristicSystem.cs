@@ -84,7 +84,7 @@ public partial struct HeuristicSystem : ISystem
                     { // If target is still active and not captured
                         float distToTarget = math.distance(transform.ValueRO.Position, targetInfo.ValueRO.Position);
                         // 아직 타겟 근처에 도달하지 않았다면 타겟을 변경하지 않고 스킵합니다.
-                        if (distToTarget > 0.5f) continue; // Allow switching if closer to target
+                        if (distToTarget > 0.8f) continue; // Allow switching only if further from target (less eager to switch)
                     }
                 }
             }
