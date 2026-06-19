@@ -15,17 +15,19 @@ partial struct MoveToTarget : ISystem
     public void OnUpdate(ref SystemState state)
     {
         var moveLength = 5f * SystemAPI.Time.DeltaTime;
-        foreach (var (move, trans, entity) in SystemAPI.Query<RefRO<MoveTargetComponent>, RefRW<LocalTransform>>().WithEntityAccess())
+        foreach (var (move, trans, entity) in SystemAPI.Query<RefRW<MoveTargetComponent>, RefRW<LocalTransform>>().WithEntityAccess())
         {
-            if (math.distance(trans.ValueRO.Position, move.ValueRO.Target) < moveLength)
+            move.ValueRW.PrevPosition = trans.ValueRO.Position;
+
+            if (math.distance(trans.ValueRO.Position, move.ValueRO.MoveTo) < moveLength)
             {
-                trans.ValueRW.Position = move.ValueRO.Target;
+                trans.ValueRW.Position = move.ValueRO.MoveTo;
             }
             else
             {
-                trans.ValueRW.Position += math.normalize(move.ValueRO.Target - trans.ValueRO.Position) * moveLength;
+                trans.ValueRW.Position += math.normalize(move.ValueRO.MoveTo - trans.ValueRO.Position) * moveLength;
                 trans.ValueRW.Rotation = quaternion.LookRotationSafe(
-                    math.normalize(move.ValueRO.Target - trans.ValueRO.Position), math.up());
+                    math.normalize(move.ValueRO.MoveTo - trans.ValueRO.Position), math.up());
             }
         }
     }

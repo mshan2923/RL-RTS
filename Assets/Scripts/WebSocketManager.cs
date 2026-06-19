@@ -215,14 +215,6 @@ public class WebSocketManager : MonoBehaviour
         while (!ct.IsCancellationRequested)
         {
 
-            {
-                if (StateQueue.Count != 0)
-                {
-                    var data = StateQueue.Peek();
-                    Debug.Log(data.ToString());
-                }
-            }
-
             while (StateQueue.TryDequeue(out var s))
             {
                 localStates.Add(s);
@@ -286,7 +278,6 @@ public class WebSocketManager : MonoBehaviour
                     });
                 }
 
-                Debug.Log($"=> {ActionQueue.Count}");
                 localStates.Clear();
                 tensorData.Dispose();
             }
@@ -323,11 +314,6 @@ public class WebSocketManager : MonoBehaviour
         {
             var states = new List<UnitState>();
             float captureRatio = 0f;
-
-            {
-                var data = StateQueue.Peek();
-                Debug.Log(data.ToString());
-            }
 
             while (StateQueue.TryDequeue(out var s))
             {

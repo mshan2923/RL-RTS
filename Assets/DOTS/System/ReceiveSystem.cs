@@ -82,7 +82,7 @@ partial struct ApplyActionJob : IJobEntity
         if (!HexMetrics.IsValidCell(targetCell, 0, Col - 1, 0, Row - 1)) return;
 
 
-        moveTarget.Target = HexMetrics.OffsetToWorld(targetCell);
-        moveTarget.PrevBaseDist = math.distance(transform.Position, basement);
+        moveTarget.MoveTo = HexMetrics.OffsetToWorld(targetCell);
+        moveTarget.BasePose = basement;
     }
 }

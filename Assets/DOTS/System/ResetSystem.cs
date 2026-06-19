@@ -71,9 +71,7 @@ public partial struct ResetSystem : ISystem
             var pos = random.NextFloat3(new float3(1, 0, 1), new float3(Width - 1, 0, Height - 1) * Radius * 0.86666f);
 
             transform.Position = pos;
-            moveTarget.Target = pos;
-            moveTarget.PrevBaseDist = 0f;
-            moveTarget.PrevTargetDist = 0f; // PrevTargetDist 초기화
+            moveTarget.MoveTo = pos;
         }
     }
 }

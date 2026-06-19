@@ -19,7 +19,7 @@ class UnitBaker : Baker<Unit>
         });
         AddComponent(entity, new MoveTargetComponent
         {
-            Target = authoring.transform.position
+            MoveTo = authoring.transform.position
         });
         AddComponent(entity, new DetectWallNormalize
         {

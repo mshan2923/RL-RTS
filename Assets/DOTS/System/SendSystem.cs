@@ -1,14 +1,19 @@
-using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
-using UnityEngine;
 
 public partial struct SendSystem : ISystem
 {
+    // ── 보상 튜닝 값 (1단계: 기지로 이동하는 행동 학습용) ──
+    private const float ArrivalRadius = 1.0f;
+    private const float ApproachReward = 2.0f;   // 기지에 가까워졌을 때
+    private const float RetreatPenalty = 1.0f;   // 기지에서 멀어졌을 때
+    private const float FacingBonus = 0.1f;       // 기지 방향을 바라보고 있을 때
+    private const float ArrivalBonus = 50.0f;     // 기지에 도착했을 때
+
     private int _step;
-    private float _prevCaptureRatio;
+    private float _prevCaptureRatio; // 2단계(점령 비율 기반 보상)에서 사용 예정, 현재는 미사용
 
     private EntityQuery _tileQuery;
     private EntityQuery _baseQuery;
@@ -19,95 +24,69 @@ public partial struct SendSystem : ISystem
         state.RequireForUpdate<WebSocketManagerComponent>();
         state.RequireForUpdate<RLConfig>();
 
-        _tileQuery = new EntityQueryBuilder(Allocator.Temp)
-            .WithAll<HexTile>().Build(ref state);
-        _baseQuery = new EntityQueryBuilder(Allocator.Temp)
-            .WithAll<BaseComponent>().Build(ref state);
+        _tileQuery = new EntityQueryBuilder(Allocator.Temp).WithAll<HexTile>().Build(ref state);
+        _baseQuery = new EntityQueryBuilder(Allocator.Temp).WithAll<BaseComponent>().Build(ref state);
         _unitQuery = new EntityQueryBuilder(Allocator.Temp)
-            .WithAll<LocalTransform, UnitComponent, DetectWallNormalize, MoveTargetComponent, TargetInfo>().Build(ref state);
+            .WithAll<LocalTransform, UnitComponent, DetectWallNormalize, MoveTargetComponent>().Build(ref state);
     }
 
     public void OnUpdate(ref SystemState state)
     {
-        if (!SystemAPI.TryGetSingleton<RLConfig>(out var config)) return;
-        if (config.IsInferenceMode) return;
+        if (!SystemAPI.TryGetSingleton<RLConfig>(out var config) || config.IsInferenceMode) return;
+        if (!SystemAPI.TryGetSingleton<MapConfig>(out var mapConfig)) return;
+        if (!SystemAPI.TryGetSingleton<EpisodeState>(out var episodeState)) return;
+        if (!SystemAPI.TryGetSingleton<BaseComponent>(out var baseComponent)) return;
 
         var manager = SystemAPI.ManagedAPI.GetSingleton<WebSocketManagerComponent>();
-        if (!SystemAPI.TryGetSingleton<MapConfig>(out var MapConfig)) return;
-        if (!SystemAPI.TryGetSingleton<EpisodeState>(out var episodeState)) return;
-        if (!SystemAPI.TryGetSingleton<BaseComponent>(out var basement)) return;
 
-        // 유닛 수집 (리셋 처리를 위해 위로 이동)
-        var transforms = _unitQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
-        var units = _unitQuery.ToComponentDataArray<UnitComponent>(Allocator.Temp);
-        var unitDetectWall = _unitQuery.ToComponentDataArray<DetectWallNormalize>(Allocator.Temp);
-        var moveTarget = _unitQuery.ToComponentDataArray<MoveTargetComponent>(Allocator.Temp);
-        var targetInfo = _unitQuery.ToComponentDataArray<TargetInfo>(Allocator.Temp);
-        var entities = _unitQuery.ToEntityArray(Allocator.Temp);
-
-        float maxDist = math.sqrt(MapConfig.Width * MapConfig.Width + MapConfig.Height * MapConfig.Height);
-
-        // [수정] 유니티 맵이 리셋되는 타이밍에 유닛의 내부 거리 데이터도 강제 싱크
+        // 에피소드 초기화 가드
         if (episodeState.NeedsReset)
         {
             _step = 0;
             _prevCaptureRatio = 0f;
-
-            // 에피소드 시작 시점의 실제 거리를 Prev 값에 강제로 꽂아넣음 (억까 패널티 방지)
-            float3 startBasePos = basement.Position;
-            foreach (var b in _baseQuery.ToComponentDataArray<BaseComponent>(Allocator.Temp))
-            {
-                if (b.Team == GroupType.Ally) { startBasePos = b.Position; break; }
-            }
-
-            for (int i = 0; i < units.Length; i++)
-            {
-                var t = moveTarget[i];
-                t.PrevBaseDist = math.length(startBasePos - transforms[i].Position) / maxDist;
-                t.PrevTargetDist = math.length(targetInfo[i].Position - transforms[i].Position) / maxDist;
-                state.EntityManager.SetComponentData(entities[i], t);
-            }
-
-            // 데이터 변경되었으니 원본 배열 다시 갱신
-            moveTarget.Dispose();
-            moveTarget = _unitQuery.ToComponentDataArray<MoveTargetComponent>(Allocator.Temp);
         }
-
         _step++;
 
-        // 타일 수집 (미사용하는 NativeHashMap 제거로 경량화)
+        // 1. 전체 맵 타일 점령 비율 계산
         var tileArray = _tileQuery.ToComponentDataArray<HexTile>(Allocator.Temp);
-        int total = 0, captured = 0;
-        foreach (var tile in tileArray)
+        int capturedTiles = 0;
+        for (int i = 0; i < tileArray.Length; i++)
         {
-            total++;
-            if (tile.OwnerID == GroupType.Ally) captured++;
+            if (tileArray[i].OwnerID == GroupType.Ally) capturedTiles++;
         }
-        float captureRatio = total > 0 ? (float)captured / total : 0f;
-        float captureGain = _step == 1 ? 0f : captureRatio - _prevCaptureRatio;
+        float captureRatio = tileArray.Length > 0 ? (float)capturedTiles / tileArray.Length : 0f;
 
-        // 기지 위치 최신화
-        float3 basePos = basement.Position;
-        foreach (var b in _baseQuery.ToComponentDataArray<BaseComponent>(Allocator.Temp))
+        // 2. 아군 기지 위치 및 맵 최대 거리(정규화 기준) 계산
+        float3 basePos = baseComponent.Position;
+        float maxDist = math.sqrt(mapConfig.Width * mapConfig.Width + mapConfig.Height * mapConfig.Height);
+        var baseArray = _baseQuery.ToComponentDataArray<BaseComponent>(Allocator.Temp);
+        for (int i = 0; i < baseArray.Length; i++)
         {
-            if (b.Team == GroupType.Ally) { basePos = b.Position; break; }
+            if (baseArray[i].Team == GroupType.Ally)
+            {
+                basePos = baseArray[i].Position;
+                break;
+            }
         }
 
-        // ── Pass 1: 도착 판정 ──
+        // 3. 유닛 데이터 수집
+        var transforms = _unitQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
+        var units = _unitQuery.ToComponentDataArray<UnitComponent>(Allocator.Temp);
+        var unitDetectWall = _unitQuery.ToComponentDataArray<DetectWallNormalize>(Allocator.Temp); // 현재 미사용 (벽 회피 보상 재도입 시 사용)
+        var moveTargets = _unitQuery.ToComponentDataArray<MoveTargetComponent>(Allocator.Temp);
+
+        // 4. 기지 도착 여부 판단 (반경 ArrivalRadius 이내)
         bool arrived = false;
         for (int i = 0; i < units.Length; i++)
         {
-            float3 toBase = basePos - transforms[i].Position;
-            if (math.length(toBase) < 1.0f)
+            if (math.length(basePos - transforms[i].Position) < ArrivalRadius)
             {
                 arrived = true;
                 break;
             }
         }
 
-        bool timeOut = _step >= config.MaxSteps;
-        bool done = timeOut || arrived;
-
+        bool done = arrived || _step >= config.MaxSteps;
         if (done)
         {
             _step = 0;
@@ -117,74 +96,23 @@ public partial struct SendSystem : ISystem
             SystemAPI.SetSingleton(episodeState);
         }
 
-        // ── Pass 2: reward 계산 + Enqueue ──
+        // 5. 유닛별 상태/보상 계산 후 큐 전송
         for (int i = 0; i < units.Length; i++)
         {
             var cell = HexMetrics.WorldToOffset(transforms[i].Position);
             var euler = math.EulerXYZ(transforms[i].Rotation.value);
             int yaw = HexMetrics.WorldYawToIndex(math.degrees(euler.y));
-            float3 toBase = basePos - transforms[i].Position;
-            float baseDist = math.length(toBase) / maxDist;
 
-            float3 toTarget = targetInfo[i].Position - transforms[i].Position;
-            float targetDist = math.length(toTarget) / maxDist;
+            float3 toBase = moveTargets[i].BasePose - transforms[i].Position;
+            float currentBaseDist = math.length(toBase);
+            float normalizedBaseDist = currentBaseDist / maxDist;
+            float baseDir = (math.degrees(math.atan2(toBase.x, toBase.z)) + 180f) / 360f;
 
-            float rawTargetDir = math.degrees(math.atan2(toTarget.x, toTarget.z));
-            float targetDir = (rawTargetDir + 180f) / 360f;
+            float reward = CalculateApproachReward(moveTargets[i], transforms[i].Position, yaw, baseDir, currentBaseDist);
 
-            float rawBaseDir = math.degrees(math.atan2(toBase.x, toBase.z));
-            float baseDir = (rawBaseDir + 180f) / 360f;
-
-            float rewardExploration = 0f;
-            float rewardReturn = 0f;
-            float rewardSurvival = 0f;
-
-            float targetDelta = moveTarget[i].PrevTargetDist - targetDist;
-
-            // 첫 프레임(_step == 1)에는 강제 순간이동 여파가 남아있을 수 있으므로 델타 보상을 0으로 마스킹
-            if (_step > 1)
-            {
-                if (targetInfo[i].IsActive)
-                {
-                    if (targetDelta > 0) rewardExploration = targetDelta * 150.0f;
-                    else rewardExploration = targetDelta * 200.0f;
-                }
-                else
-                {
-                    float baseDelta = moveTarget[i].PrevBaseDist - baseDist;
-                    if (baseDelta > 0) rewardReturn = baseDelta * 40.0f;
-                    else rewardReturn = baseDelta * 60.0f;
-                }
-            }
-
-            // 벽/맵 경계 페널티
-            float[] wallSensors = { unitDetectWall[i].n0, unitDetectWall[i].n1, unitDetectWall[i].n2,
-                                    unitDetectWall[i].n3, unitDetectWall[i].n4, unitDetectWall[i].n5 };
-
-            int lastAction = moveTarget[i].command;
-            if (lastAction >= 0 && lastAction < 6)
-            {
-                rewardSurvival -= (1.0f - wallSensors[lastAction]) / 0.5f * 0.8f;
-            }
-
-            if (unitDetectWall[i].isWall) rewardSurvival -= 1.0f;
-            else rewardSurvival += 0.005f;
-
-            float globalReward = captureGain * 40.0f;
-            float reward = rewardExploration + rewardReturn + rewardSurvival + globalReward;
-
-            if (math.length(toBase) < 1.0f) reward += 10.0f;
-            reward -= 0.02f;
-
-            // 변수 업데이트
-            var target = moveTarget[i];
-            target.PrevBaseDist = baseDist;
-            target.PrevTargetDist = targetDist;
-            state.EntityManager.SetComponentData(entities[i], target);
-
+            // TargetInfo(점령 지점 타게팅)는 2단계에서 사용 예정이라 현재는 비활성화 상태로 전송
             manager.StateQueue.Enqueue(new WebSocketManager.StateData
             {
-                // ... (Enqueue 데이터 구조는 기존과 동일) ...
                 UnitId = units[i].Id,
                 Col = cell.x,
                 Row = cell.y,
@@ -192,38 +120,64 @@ public partial struct SendSystem : ISystem
                 Reward = reward,
                 Done = done,
                 CaptureRatio = captureRatio,
-                BaseDist = baseDist,
+                BaseDist = normalizedBaseDist,
                 BaseDir = baseDir,
-                N0 = unitDetectWall[i].n0,
-                N1 = unitDetectWall[i].n1,
-                N2 = unitDetectWall[i].n2,
-                N3 = unitDetectWall[i].n3,
-                N4 = unitDetectWall[i].n4,
-                N5 = unitDetectWall[i].n5,
-                TargetActive = targetInfo[i].IsActive ? 1f : 0f,
-                TargetDist = math.clamp(targetDist, 0, 1f),
-                TargetDir = math.clamp(targetDir, 0, 1f)
+                N0 = 1f,
+                N1 = 1f,
+                N2 = 1f,
+                N3 = 1f,
+                N4 = 1f,
+                N5 = 1f,
+                TargetActive = 0f,
+                TargetDist = 0f,
+                TargetDir = 0f
             });
         }
 
-        // JustCaptured 리셋
-        var tiles = _tileQuery.ToComponentDataArray<HexTile>(Allocator.Temp);
-        for (int i = 0; i < tiles.Length; i++)
+        // 6. 타일 캡처 플래그 후처리
+        for (int i = 0; i < tileArray.Length; i++)
         {
-            var t = tiles[i];
-            t.JustCaptured = false;
-            tiles[i] = t;
+            var t = tileArray[i];
+            if (t.JustCaptured)
+            {
+                t.JustCaptured = false;
+                tileArray[i] = t;
+            }
         }
-        _tileQuery.CopyFromComponentDataArray(tiles);
+        _tileQuery.CopyFromComponentDataArray(tileArray);
         _prevCaptureRatio = captureRatio;
 
         tileArray.Dispose();
+        baseArray.Dispose();
         transforms.Dispose();
         units.Dispose();
-        tiles.Dispose();
         unitDetectWall.Dispose();
-        moveTarget.Dispose();
-        targetInfo.Dispose();
-        entities.Dispose();
+        moveTargets.Dispose();
+    }
+
+    // 1단계 보상: 기지 접근 + 기지 방향 응시 + 도착 보너스
+    private static float CalculateApproachReward(in MoveTargetComponent moveTarget, float3 currentPos, int yaw, float baseDir, float currentBaseDist)
+    {
+        float reward = 0f;
+
+        // 전진 보상: 직전 위치보다 기지에 가까워졌으면 +, 멀어지거나 그대로면 -
+        float prevDistSq = math.distancesq(moveTarget.BasePose, moveTarget.PrevPosition);
+        float currDistSq = math.distancesq(moveTarget.BasePose, currentPos);
+        reward += (prevDistSq - currDistSq) > 0f ? ApproachReward : -RetreatPenalty;
+
+        // 방향 보상: 기지 방향(0~5 헥스 인덱스)을 정확히 바라보고 있으면 추가 점수
+        int targetYawIndex = math.clamp((int)math.round(baseDir * 6f) % 6, 0, 5);
+        if (yaw == targetYawIndex)
+        {
+            reward += FacingBonus;
+        }
+
+        // 도착 보상: 기지 반경 안에 들어오면 큰 보상
+        if (currentBaseDist < ArrivalRadius)
+        {
+            reward += ArrivalBonus;
+        }
+
+        return reward;
     }
 }
