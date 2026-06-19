@@ -150,12 +150,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::RLManager
   isTrainingMode: 1
   inferenceModelAsset: {fileID: 0}
-  agentCount: 8
-  targetCount: 1
   agentPrefab: {fileID: 2156847072483670209, guid: 1988aab720fede54298764e399ed33a2, type: 3}
   targetPrefab: {fileID: 4743909631692636450, guid: 2f30e52e95f327243bdde3863406660e, type: 3}
-  spawnAreaSize: 5
-  moveSpeed: 5
+  spawnCount: 8
+  gridSpacing: 10
+  moveSpeed: 0.3
   maxEpisodeSteps: 500
 --- !u!4 &746508847
 Transform:

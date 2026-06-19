@@ -1,278 +1,291 @@
-"""
-train_server.py  ─  Target Seek RL 학습 서버
-=========================================================
-Unity 와 TCP 소켓으로 통신하며 DQN 학습 진행.
-ONNX 는 학습 도중 언제든 수동으로 추출 가능.
-
-[프로토콜]  개행(\n) 구분 JSON, 기본 포트 9000
-
-  Unity → Python
-    {"type":"step",
-     "agents":[{"id":0,"obs":[angleNorm,distDelta],"reward":0.1,"done":false}, ...]}
-
-  Python → Unity
-    {"actions":[1,0,2,...]}
-
-  Unity → Python  (UI 버튼 등)
-    {"type":"export"}
-  Python → Unity
-    {"status":"ok","path":"checkpoints/q_net.onnx"}
-
-[콘솔]  실행 중 'e' + Enter → ONNX 즉시 export
-"""
-
-import json, os, random, socket, sys, threading
-from collections import deque
-
-import numpy as np
+import socket
+import json
 import torch
 import torch.nn as nn
+import torch.optim as optim
+from torch.distributions import Categorical
+import threading
+import os
 
+# ==========================================
+# 1. 하이퍼파라미터 및 하드웨어 설정
+# ==========================================
+INPUT_DIM = 2    # 관측치: [목표물 방향, 거리 변화량]
+ACTION_DIM = 4   # 행동: 0(상), 1(하), 2(좌), 3(우) - 일반 캐릭터 이동
 
-# ══════════════════════════════════════════════════════════════════
-#  모델
-# ══════════════════════════════════════════════════════════════════
-class QNetwork(nn.Module):
-    """입력 2개(angleNorm, distDelta) → Q값 3개(좌회전/직진/우회전)"""
-
-    def __init__(self, state_dim: int = 2, action_dim: int = 3, hidden: int = 64):
-        super().__init__()
+# ==========================================
+# 2. PPO 뉴럴 네트워크 정의 (OOP 구조)
+# ==========================================
+class Actor(nn.Module):
+    """행동을 결정하는 정책 네트워크 (유니티 인퍼런스 엔진 수출용)"""
+    def __init__(self, input_dim, action_dim):
+        super(Actor, self).__init__()
         self.net = nn.Sequential(
-            nn.Linear(state_dim, hidden), nn.ReLU(),
-            nn.Linear(hidden, hidden),   nn.ReLU(),
-            nn.Linear(hidden, action_dim),
+            nn.Linear(input_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, action_dim)
         )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
         return self.net(x)
 
-
-# ══════════════════════════════════════════════════════════════════
-#  리플레이 버퍼
-# ══════════════════════════════════════════════════════════════════
-class ReplayBuffer:
-    def __init__(self, capacity: int = 100_000):
-        self.buf = deque(maxlen=capacity)
-
-    def push(self, s, a, r, s2, done):
-        self.buf.append((s, a, r, s2, float(done)))
-
-    def sample(self, n: int):
-        batch = random.sample(self.buf, n)
-        s, a, r, s2, d = zip(*batch)
-        return (np.array(s,  dtype=np.float32),
-                np.array(a,  dtype=np.int64),
-                np.array(r,  dtype=np.float32),
-                np.array(s2, dtype=np.float32),
-                np.array(d,  dtype=np.float32))
-
-    def __len__(self):
-        return len(self.buf)
-
-
-# ══════════════════════════════════════════════════════════════════
-#  DQN 에이전트
-# ══════════════════════════════════════════════════════════════════
-class DQNAgent:
-    def __init__(self, lr: float = 1e-3, gamma: float = 0.99):
-        self.gamma = gamma
-        self.q   = QNetwork()
-        self.tgt = QNetwork()
-        self.tgt.load_state_dict(self.q.state_dict())
-        self.tgt.eval()
-        self.opt = torch.optim.Adam(self.q.parameters(), lr=lr)
-
-    # ε-greedy 행동 선택
-    def act(self, obs: list, eps: float) -> int:
-        if random.random() < eps:
-            return random.randrange(3)
-        t = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
-        with torch.no_grad():
-            return int(self.q(t).argmax(1).item())
-
-    # 학습 1스텝
-    def train_step(self, batch) -> float:
-        s, a, r, s2, d = (torch.tensor(x) for x in batch)
-        q_val  = self.q(s).gather(1, a.unsqueeze(1)).squeeze(1)
-        with torch.no_grad():
-            target = r + self.gamma * self.tgt(s2).max(1)[0] * (1 - d)
-        loss = nn.functional.mse_loss(q_val, target)
-        self.opt.zero_grad()
-        loss.backward()
-        self.opt.step()
-        return float(loss.item())
-
-    def sync_target(self):
-        self.tgt.load_state_dict(self.q.state_dict())
-
-    # 체크포인트 저장/로드
-    def save(self, path: str):
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        torch.save(self.q.state_dict(), path)
-
-    def load(self, path: str):
-        sd = torch.load(path, map_location="cpu")
-        self.q.load_state_dict(sd)
-        self.tgt.load_state_dict(sd)
-
-    # ONNX export  (Unity Inference Engine 입력/출력 이름 고정)
-    def export_onnx(self, path: str):
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        self.q.eval()
-        dummy = torch.zeros(1, 2)
-        torch.onnx.export(
-            self.q, dummy, path,
-            input_names=["obs"],
-            output_names=["q_values"],
-            dynamic_axes={"obs": {0: "batch"}, "q_values": {0: "batch"}},
-            opset_version=13,
-            dynamo=False,   # 레거시 TorchScript 기반, opset 고정
+class Critic(nn.Module):
+    """상태의 가치를 평가하는 가치 네트워크 (학습 서버 전용)"""
+    def __init__(self, input_dim):
+        super(Critic, self).__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
         )
-        self.q.train()
-        print(f"[Export] ONNX → {path}")
-        print(f"         obs(batch,2) → q_values(batch,3)  argmax = 행동 선택")
+    def forward(self, x):
+        return self.net(x)
 
+# ==========================================
+# 3. PPO 학습 및 에이전트 관리 클래스
+# ==========================================
+class PPOManager:
+    def __init__(self, lr_actor=0.0003, lr_critic=0.001, gamma=0.99, K_epochs=5, eps_clip=0.2):
+        self.gamma = gamma
+        self.eps_clip = eps_clip
+        self.K_epochs = K_epochs
+        
+        self.actor = Actor(INPUT_DIM, ACTION_DIM)
+        self.critic = Critic(INPUT_DIM)
+        
+        self.optimizer_actor = optim.Adam(self.actor.parameters(), lr=lr_actor)
+        self.optimizer_critic = optim.Adam(self.critic.parameters(), lr=lr_critic)
+        
+        self.MseLoss = nn.MSELoss()
+        
+        # 멀티 에이전트 데이터 수집용 버퍼
+        self.states = []
+        self.actions = []
+        self.logprobs = []
+        self.rewards = []
+        self.is_terminals = []
+        self.num_agents = 1
 
-# ══════════════════════════════════════════════════════════════════
-#  학습 서버
-# ══════════════════════════════════════════════════════════════════
-class RLServer:
-    CKPT = "checkpoints/q_net.pt"
-    ONNX = "checkpoints/q_net.onnx"
+    def select_action(self, state_list):
+        """유니티 내 모든 에이전트의 관측치를 한 번에 받아 배치 처리로 행동 선택"""
+        state_tensor = torch.FloatTensor(state_list)
+        with torch.no_grad():
+            logits = self.actor(state_tensor)
+            dist = Categorical(logits=logits)
+            action = dist.sample()
+            action_logprob = dist.log_prob(action)
+            
+        return action.tolist(), action_logprob.tolist()
 
-    def __init__(
-        self,
-        host: str  = "0.0.0.0",
-        port: int  = 9000,
-        batch: int = 64,
-        warmup: int          = 500,
-        target_update: int   = 300,
-        eps_start: float     = 1.0,
-        eps_end: float       = 0.05,
-        eps_decay: int       = 30_000,
-        save_every: int      = 2_000,
-        log_every: int       = 200,
-    ):
-        self.host, self.port = host, port
-        self.batch, self.warmup = batch, warmup
-        self.target_update = target_update
-        self.eps_start, self.eps_end, self.eps_decay = eps_start, eps_end, eps_decay
-        self.save_every, self.log_every = save_every, log_every
+    def store_transition(self, states, actions, logprobs, rewards, dones):
+        """멀티 에이전트의 스텝 데이터를 버퍼에 저장"""
+        self.num_agents = len(states)
+        self.states.extend(states)
+        self.actions.extend(actions)
+        self.logprobs.extend(logprobs)
+        self.rewards.extend(rewards)
+        self.is_terminals.extend(dones)
 
-        self.agent  = DQNAgent()
-        self.buf    = ReplayBuffer()
-        self.prev   = {}         # {agent_id: (obs, action)}  학습용 이전 상태 캐시
-        self.steps  = 0
-        self._export_req = False # 콘솔 'e' 플래그
+    def update(self):
+        """수집된 데이터를 바탕으로 에포크만큼 가중치 업데이트"""
+        if len(self.states) == 0:
+            return
+            
+        total_samples = len(self.states)
+        num_steps = total_samples // self.num_agents
+        
+        # 동기식 멀티 에이전트 환경에 맞게 리턴(Returns) 계산 분리
+        rewards_targets = [0.0] * total_samples
+        for a in range(self.num_agents):
+            discounted_reward = 0
+            for s in range(num_steps - 1, -1, -1):
+                idx = s * self.num_agents + a
+                if self.is_terminals[idx]:
+                    discounted_reward = 0
+                discounted_reward = self.rewards[idx] + (self.gamma * discounted_reward)
+                rewards_targets[idx] = discounted_reward
+                
+        # 텐서 변환
+        old_states = torch.FloatTensor(self.states)
+        old_actions = torch.LongTensor(self.actions)
+        old_logprobs = torch.FloatTensor(self.logprobs)
+        rewards = torch.FloatTensor(rewards_targets)
+        
+        # 보상 정규화로 안정성 확보
+        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
+        
+        # K-epochs 최적화 루프
+        for _ in range(self.K_epochs):
+            logits = self.actor(old_states)
+            dist = Categorical(logits=logits)
+            logprobs = dist.log_prob(old_actions)
+            dist_entropy = dist.entropy()
+            state_values = self.critic(old_states).squeeze()
+            
+            # PPO Clip 손실 계산
+            ratios = torch.exp(logprobs - old_logprobs)
+            advantages = rewards - state_values.detach()
+            
+            surr1 = ratios * advantages
+            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
+            
+            loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
+            
+            # 가중치 업데이트
+            self.optimizer_actor.zero_grad()
+            self.optimizer_critic.zero_grad()
+            loss.mean().backward()
+            self.optimizer_actor.step()
+            self.optimizer_critic.step()
+            
+        # 데이터 비우기
+        self.states.clear()
+        self.actions.clear()
+        self.logprobs.clear()
+        self.rewards.clear()
+        self.is_terminals.clear()
+        print("[Server] >>> PPO 신경망 가중치 최적화 완료 <<<")
 
-    # ── 엡실론 스케줄 ─────────────────────────────────────────────
-    def _eps(self) -> float:
-        frac = min(1.0, self.steps / self.eps_decay)
-        return self.eps_start + frac * (self.eps_end - self.eps_start)
+    def export_onnx(self):
+            if not hasattr(self, 'actor') or self.actor is None:
+                print("[Error] 내보낼 모델 객체(actor)가 존재하지 않아.")
+                return
 
-    # ── step 메시지 처리 ─────────────────────────────────────────
-    def _handle_step(self, msg: dict) -> dict:
-        actions = []
-        for a in msg["agents"]:
-            aid, obs, rew, done = a["id"], a["obs"], a["reward"], a["done"]
+            import os
+            import torch
+            import onnx  # 이 부분이 추가되었어!
 
-            # 이전 (s,a) 존재하면 전환 저장
-            if aid in self.prev:
-                prev_obs, prev_act = self.prev.pop(aid) if done else (None, None)
-                if prev_obs is None:               # done=False → pop 하지 말고 peek
-                    prev_obs, prev_act = self.prev[aid]
-                self.buf.push(prev_obs, prev_act, rew, obs, done)
-
-                # done=True 면 이 에이전트 캐시 제거 (에피소드 종료)
-                if done and aid in self.prev:
-                    del self.prev[aid]
-
-            # 행동 선택
-            action = self.agent.act(obs, self._eps())
-            if not done:
-                self.prev[aid] = (obs, action)
-            actions.append(action)
-
-        # 학습
-        if len(self.buf) >= max(self.batch, self.warmup):
-            loss = self.agent.train_step(self.buf.sample(self.batch))
-            self.steps += 1
-
-            if self.steps % self.target_update == 0:
-                self.agent.sync_target()
-
-            if self.steps % self.save_every == 0:
-                self.agent.save(self.CKPT)
-                print(f"[Step {self.steps}]  ε={self._eps():.3f}  loss={loss:.4f}  buf={len(self.buf)}")
-
-            elif self.steps % self.log_every == 0:
-                print(f"[Step {self.steps}]  ε={self._eps():.3f}  loss={loss:.4f}")
-
-        return {"actions": actions}
-
-    # ── ONNX 추출 ────────────────────────────────────────────────
-    def _do_export(self):
-        self.agent.save(self.CKPT)
-        self.agent.export_onnx(self.ONNX)
-
-    # ── 콘솔 감시 스레드 ('e' → export) ─────────────────────────
-    def _stdin_watcher(self):
-        for line in sys.stdin:
-            if line.strip().lower() == "e":
-                self._export_req = True
-
-    # ── 서버 메인 루프 ────────────────────────────────────────────
-    def run(self):
-        threading.Thread(target=self._stdin_watcher, daemon=True).start()
-
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind((self.host, self.port))
-        srv.listen(1)
-        print(f"[Server] {self.host}:{self.port} 대기 중...")
-        print(f"         콘솔에서 'e' + Enter → 즉시 ONNX export")
-        print(f"         Unity UI 버튼 → {{\"type\":\"export\"}} 전송해도 됩니다\n")
-
-        while True:
-            conn, addr = srv.accept()
-            print(f"[Server] Unity 연결: {addr}")
-            self.prev.clear()   # 새 연결 시 에이전트 캐시 초기화
+            dummy_input = torch.randn(1, 2)
+            
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            onnx_path = os.path.join(script_dir, "PPO_Policy.onnx")
 
             try:
-                rf = conn.makefile("r", encoding="utf-8")
-                wf = conn.makefile("w", encoding="utf-8")
-
-                while True:
-                    # export 요청 확인 (콘솔)
-                    if self._export_req:
-                        self._do_export()
-                        self._export_req = False
-
-                    line = rf.readline()
-                    if not line:
-                        break
-
-                    msg = json.loads(line)
-                    t = msg.get("type")
-
-                    if t == "step":
-                        resp = self._handle_step(msg)
-                    elif t == "export":
-                        self._do_export()
-                        resp = {"status": "ok", "path": self.ONNX}
-                    else:
-                        resp = {"error": f"unknown type: {t}"}
-
-                    wf.write(json.dumps(resp) + "\n")
-                    wf.flush()
-
+                # 1. 먼저 문제의 매개변수를 빼고 기본 구조로 익스포트를 진행해
+                torch.onnx.export(
+                    self.actor,                 
+                    (dummy_input,),
+                    onnx_path,
+                    export_params=True,
+                    opset_version=15,
+                    do_constant_folding=True,
+                    input_names=['input'],
+                    output_names=['output'],
+                    dynamic_axes={
+                        'input': {0: 'batch_size'},
+                        'output': {0: 'batch_size'}
+                    }
+                )
+                
+                # 2. 내보낸 ONNX 파일을 다시 불러와서 강제로 단일 파일로 덮어씌워 (*.onnx.data 제거)
+                loaded_model = onnx.load(onnx_path)
+                onnx.save(loaded_model, onnx_path, save_as_external_data=False)
+                
+                print(f"[Python] 외부 파일 없이 단일 ONNX 파일 익스포트 성공: {onnx_path}")
             except Exception as e:
-                print(f"[Server] 연결 종료: {e}")
-            finally:
-                conn.close()
-                print("[Server] 재연결 대기...\n")
+                print(f"[Python] ONNX 내보내기 실패: {e}")
 
+# ==========================================
+# 4. 실시간 콘솔 명령어 처리 스레드
+# ==========================================
+def console_command_loop(ppo_manager):
+    print("사용 가능한 콘솔 명령어 [ save: ONNX 추출 | exit: 서버 종료 ]")
+    while True:
+        cmd = input().strip().lower()
+        if cmd == "save":
+            ppo_manager.export_onnx()
+        elif cmd == "exit":
+            print("서버를 안전하게 종료할게.")
+            os._exit(0)
 
-# ══════════════════════════════════════════════════════════════════
+# ==========================================
+# 5. 메인 네트워크 소켓 서버 구동
+# ==========================================
+def main():
+    ppo = PPOManager()
+    
+    # 키보드 입력 처리를 위한 백그라운드 스레드 가동 (수동 ONNX 추출용)
+    cmd_thread = threading.Thread(target=console_command_loop, args=(ppo,), daemon=True)
+    cmd_thread.start()
+    
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind(('127.0.0.1', 5000))
+    server_socket.listen(1)
+    print("[Server] 파이썬 PPO 학습 서버가 127.0.0.1:5000 에서 대기 중이야.")
+    
+    # 이전 프레임의 연산 추적용 변수
+    last_states = None
+    last_actions = None
+    last_logprobs = None
+    
+    while True:
+        conn, addr = server_socket.accept()
+        print(f"[Server] 유니티 그래픽 환경 연결됨: {addr}")
+        
+        buffer = ""
+        while True:
+            data = conn.recv(4096).decode('utf-8')
+            if not data:
+                break
+                
+            buffer += data
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                if not line.strip():
+                    continue
+                    
+                try:
+                    request = json.loads(line)
+                    cmd = request.get("command")
+                    states = request.get("states")
+                    
+                    if cmd == "step":
+                        rewards = request.get("rewards")
+                        dones = request.get("dones")
+                        
+                        # 이전 행동의 결과가 존재하면 학습 버퍼에 누적
+                        if last_states is not None:
+                            ppo.store_transition(last_states, last_actions, last_logprobs, rewards, dones)
+                        
+                        # 현재 상태를 바탕으로 새로운 배치 행동 결정
+                        actions, logprobs = ppo.select_action(states)
+                        
+                        last_states = states
+                        last_actions = actions
+                        last_logprobs = logprobs
+                        
+                        # 유니티로 즉시 전달
+                        response = json.dumps({"actions": actions}) + "\n"
+                        conn.sendall(response.encode('utf-8'))
+                        
+                        # 배치 샘플 수량이 기준치를 넘기면 최적화 수행 (예: 1024개 샘플)
+                        if len(ppo.states) >= 1024:
+                            ppo.update()
+                            last_states = None  # 연속성 데이터 초기화
+                            
+                    elif cmd == "reset":
+                        # 에피소드가 끝나서 전체 유닛이 일괄 재배치 되었을 때 진입
+                        last_states = None
+                        last_actions = None
+                        last_logprobs = None
+                        
+                        actions, logprobs = ppo.select_action(states)
+                        last_states = states
+                        last_actions = actions
+                        last_logprobs = logprobs
+                        
+                        response = json.dumps({"actions": actions}) + "\n"
+                        conn.sendall(response.encode('utf-8'))
+                        print("[Server] >>> 에피소드 종료: 일괄 제거 및 초기 재배치 완료 <<<")
+                        
+                except Exception as e:
+                    print(f"[Error] 데이터 파싱 에러: {e}")
+                    
+        conn.close()
+        print("[Server] 유니티 클라이언트 연결 종료.")
+
 if __name__ == "__main__":
-    RLServer().run()
+    main()

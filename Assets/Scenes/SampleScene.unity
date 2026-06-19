@@ -163,7 +163,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5441d8f4bb3e14f45a074b66d74c6600, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebSocketManager
-  mode: 1
+  mode: 0
   _modelAsset: {fileID: 5022602860645237092, guid: db2b4b265ec9cde4297cb894cf687932, type: 3}
 --- !u!1 &330585543
 GameObject:

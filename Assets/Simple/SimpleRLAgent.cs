@@ -1,437 +1,362 @@
-// RLManager.cs
-// =====================================================================
-//  Target Seek RL  ─  Unity 매니저 (단일 파일)
-// =====================================================================
-//  역할
-//    ┌─ 학습 모드 (useInference = false)
-//    │    TCP 소켓으로 Python 서버에 관측 전송 → 행동 수신 → 에이전트 이동
-//    │    에피소드 종료 시 전체 에이전트/목표물 일괄 제거 후 재배치
-//    └─ 추론 모드 (useInference = true)
-//         Unity Inference Engine 으로 ONNX 로컬 실행 (서버 불필요)
-//         활성 에이전트 전체를 배치로 묶어 프레임당 추론 1회
-//
-//  관측 (Python 서버와 스펙 동일)
-//    obs[0] angleNorm   : 에이전트 정면 → 목표 방향 signed angle / 180°  (-1~1)
-//    obs[1] distDelta   : (이전거리 - 현재거리) / moveSpeed  (-1~1, +가까워짐)
-//
-//  행동 (discrete 3)
-//    0 = 좌회전 + 전진   1 = 직진   2 = 우회전 + 전진
-//
-//  사용법
-//    1. 빈 GameObject → 이 스크립트 부착
-//    2. Inspector 에서 agentPrefab / targetPrefab 할당
-//    3. 학습 : useInference=false, Python 서버 먼저 실행
-//    4. 추론 : useInference=true, onnxModel 에 ONNX 파일 할당
-//              패키지 매니저 → Unity Inference Engine 설치 필요
-//    5. ONNX 수동 export : 런타임 중 RequestExport() 호출
-//       예) UI Button OnClick → RLManager.RequestExport
-// =====================================================================
-
 using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Net.Sockets;
 using System.Text;
-using System.Threading;
 using UnityEngine;
 using Unity.InferenceEngine;
 
-public class RLManager : MonoBehaviour
+public class PPOAgentManager : MonoBehaviour
 {
-    // ── Inspector ────────────────────────────────────────────────
-    [Header("프리팹")]
+    [Header("모드 설정")]
+    public bool isTrainingMode = true;
+
+    [Header("Unity 6 Inference Engine")]
+    public ModelAsset inferenceModelAsset;
+    private Model runtimeModel;
+    private Worker inferenceWorker;
+
+    [Header("개수 설정")]
+    public int agentCount = 8;
+    public int targetCount = 12;
+
+    [Header("프리팹 설정")]
     public GameObject agentPrefab;
     public GameObject targetPrefab;
 
-    [Header("에피소드 설정")]
-    public int numAgents = 8;
-    public int numTarget = 8;
-    public float spawnRadius = 8f;
-    public float minDist = 2f;
-    public float moveSpeed = 0.3f;
-    public float turnDeg = 15f;
-    public float successDist = 0.8f;
-    public int maxSteps = 300;
-    public float stepPenalty = 0.005f;
-    public float successBonus = 5f;
+    [Header("스폰 범위 설정")]
+    public float spawnAreaSize = 20f;
 
-    [Header("학습 서버 연결")]
-    public string serverIP = "127.0.0.1";
-    public int serverPort = 9000;
+    private List<Transform> agents = new List<Transform>();
+    private List<Transform> targets = new List<Transform>();
 
-    [Header("추론 모드")]
-    public bool useInference = false;
-    public ModelAsset onnxModel;           // Inference Engine ONNX 파일
-    public BackendType backendType = BackendType.CPU;
+    private int[] agentTargetIndices;
+    private float[] previousDistances;
 
-    // ── 에이전트 상태 ─────────────────────────────────────────────
-    struct AgentState
+    private int currentStep = 0;
+    public float moveSpeed = 5f;
+    public int maxEpisodeSteps = 500;
+
+    // 소켓 통신용
+    private TcpClient client;
+    private NetworkStream stream;
+    private byte[] receiveBuffer = new byte[8192];
+
+    [Serializable]
+    public class ActionData
     {
-        public Vector3 pos;
-        public float heading;     // 도(°), 0 = +Z
-        public Vector3 targetPos;
-        public float prevDist;
-        public float reward;      // 직전 StepAgent 에서 계산된 보상
-        public bool done;
-        public int steps;
+        public List<int> actions;
     }
 
-    GameObject[] agentGOs;
-    GameObject[] targetGOs;
-    AgentState[] states;
+    void Awake()
+    {
+        SpawnEnvironmentPool();
+    }
 
-    // ── 소켓 (학습 모드) ─────────────────────────────────────────
-    TcpClient tcp;
-    StreamWriter sw;
-    StreamReader sr;
-    Thread recvThread;
-    readonly Queue<string> recvQ = new Queue<string>();
-    readonly object qLock = new object();
+    void Start()
+    {
+        if (isTrainingMode)
+        {
+            ConnectToPythonServer();
+            SendResetEpisode();
+        }
+        else
+        {
+            InitInferenceEngine();
+        }
+    }
 
-    // ── Inference Engine (추론 모드) ─────────────────────────────
-    Worker inferWorker;
+    void SpawnEnvironmentPool()
+    {
+        if (agentPrefab == null || targetPrefab == null) return;
 
-    // ── 통계 ─────────────────────────────────────────────────────
-    int episode = 0;
-    float totalReward = 0f;
+        agentTargetIndices = new int[agentCount];
+        previousDistances = new float[agentCount];
 
-    // ═════════════════════════════════════════════════════════════
-    //  라이프사이클
-    // ═════════════════════════════════════════════════════════════
-    async void Start()
+        for (int i = 0; i < targetCount; i++)
+        {
+            Vector3 randomPos = GetRandomPosInMap();
+            GameObject targetObj = Instantiate(targetPrefab, randomPos, Quaternion.identity, transform);
+            targetObj.name = $"Common_Target_{i}";
+            targets.Add(targetObj.transform);
+        }
+
+        for (int i = 0; i < agentCount; i++)
+        {
+            Vector3 randomPos = GetRandomPosInMap();
+            GameObject agentObj = Instantiate(agentPrefab, randomPos, Quaternion.identity, transform);
+            agentObj.name = $"Agent_{i}";
+            agents.Add(agentObj.transform);
+
+            agentTargetIndices[i] = UnityEngine.Random.Range(0, targetCount);
+        }
+
+        Debug.Log($"[Unity] 에이전트 {agentCount}개, 공통 타겟 {targetCount}개 배치 완료야.");
+    }
+
+    Vector3 GetRandomPosInMap()
+    {
+        float rx = UnityEngine.Random.Range(-spawnAreaSize, spawnAreaSize);
+        float rz = UnityEngine.Random.Range(-spawnAreaSize, spawnAreaSize);
+        return new Vector3(rx, 0f, rz);
+    }
+
+    void ConnectToPythonServer()
     {
         try
         {
-            if (useInference) InitInference();
-            else ConnectServer();
-
-            await EpisodeLoopAsync();
+            client = new TcpClient("127.0.0.1", 5000);
+            client.ReceiveTimeout = 1000;
+            client.SendTimeout = 1000;
+            stream = client.GetStream();
         }
-        catch (OperationCanceledException) { /* 씬 언로드 */ }
-        catch (Exception e) { Debug.LogError($"[RL] 치명 오류: {e}"); }
+        catch (Exception e)
+        {
+            Debug.LogError($"[Unity] 서버 연결 실패: {e.Message}");
+        }
+    }
+
+    void SendResetEpisode()
+    {
+        currentStep = 0;
+        ResetAllPositionsAndTargets();
+
+        List<float[]> currentStates = GatherAllStates();
+        List<float> dummyRewards = new List<float>(new float[agents.Count]);
+        List<bool> dummyDones = new List<bool>(new bool[agents.Count]);
+
+        string json = MakeJsonPayload("reset", currentStates, dummyRewards, dummyDones) + "\n";
+        SendDataAndReceiveAction(json);
+    }
+
+    void FixedUpdate()
+    {
+        if (agents.Count == 0) return;
+
+        currentStep++;
+        List<float[]> currentStates = GatherAllStates();
+
+        if (isTrainingMode)
+        {
+            List<float> rewards = new List<float>();
+            List<bool> dones = new List<bool>();
+
+            for (int i = 0; i < agents.Count; i++)
+            {
+                Transform myTarget = targets[agentTargetIndices[i]];
+                float currentDist = Vector3.Distance(agents[i].localPosition, myTarget.localPosition);
+
+                float deltaDist = previousDistances[i] - currentDist;
+                previousDistances[i] = currentDist;
+
+                float reward = deltaDist * 10f;
+                bool done = false;
+
+                // 변경된 핵심 로직: 목표에 성공적으로 도달했을 때
+                if (currentDist < 1.2f)
+                {
+                    reward += 15f;
+                    done = true;
+
+                    // 1. 해당 에이전트만 즉시 새로운 랜덤 위치로 리스폰(시각적 피드백 제공)
+                    agents[i].localPosition = GetRandomPosInMap();
+
+                    // 2. 새로운 목표물도 무작위로 다시 지정해줘
+                    agentTargetIndices[i] = UnityEngine.Random.Range(0, targetCount);
+
+                    // 3. 리스폰된 위치 기준으로 거리 데이터 갱신해
+                    previousDistances[i] = Vector3.Distance(agents[i].localPosition, targets[agentTargetIndices[i]].localPosition);
+                }
+
+                rewards.Add(reward);
+                dones.Add(done);
+            }
+
+            if (currentStep >= maxEpisodeSteps)
+            {
+                SendResetEpisode();
+                return;
+            }
+
+            string json = MakeJsonPayload("step", currentStates, rewards, dones) + "\n";
+            SendDataAndReceiveAction(json);
+        }
+        else
+        {
+            // 추론(테스트) 모드에서도 동일하게 도착하면 리스폰되도록 동기화해둠
+            for (int i = 0; i < agents.Count; i++)
+            {
+                float currentDist = Vector3.Distance(agents[i].localPosition, targets[agentTargetIndices[i]].localPosition);
+                if (currentDist < 1.2f)
+                {
+                    agents[i].localPosition = GetRandomPosInMap();
+                    agentTargetIndices[i] = UnityEngine.Random.Range(0, targetCount);
+                }
+            }
+
+            List<int> actions = RunLocalInference(currentStates);
+            ApplyActionsToAgents(actions);
+
+            if (currentStep >= maxEpisodeSteps)
+            {
+                currentStep = 0;
+                ResetAllPositionsAndTargets();
+            }
+        }
+    }
+
+    List<float[]> GatherAllStates()
+    {
+        List<float[]> statesList = new List<float[]>();
+        for (int i = 0; i < agents.Count; i++)
+        {
+            Transform myTarget = targets[agentTargetIndices[i]];
+            Vector3 directionToTarget = (myTarget.localPosition - agents[i].localPosition).normalized;
+
+            float angle = Mathf.Atan2(directionToTarget.x, directionToTarget.z);
+            float currentDist = Vector3.Distance(agents[i].localPosition, myTarget.localPosition);
+
+            statesList.Add(new float[] { angle, currentDist });
+        }
+        return statesList;
+    }
+
+    void ResetAllPositionsAndTargets()
+    {
+        for (int i = 0; i < targets.Count; i++)
+        {
+            targets[i].localPosition = GetRandomPosInMap();
+        }
+
+        for (int i = 0; i < agents.Count; i++)
+        {
+            agents[i].localPosition = GetRandomPosInMap();
+            agentTargetIndices[i] = UnityEngine.Random.Range(0, targetCount);
+            previousDistances[i] = Vector3.Distance(agents[i].localPosition, targets[agentTargetIndices[i]].localPosition);
+        }
+    }
+
+    void InitInferenceEngine()
+    {
+        if (inferenceModelAsset == null) return;
+        runtimeModel = ModelLoader.Load(inferenceModelAsset);
+        inferenceWorker = new Worker(runtimeModel, BackendType.GPUCompute);
+    }
+
+    List<int> RunLocalInference(List<float[]> statesList)
+    {
+        int batchSize = statesList.Count;
+        float[] inputArray = new float[batchSize * 2];
+        int index = 0;
+        for (int i = 0; i < batchSize; i++)
+        {
+            inputArray[index++] = statesList[i][0];
+            inputArray[index++] = statesList[i][1];
+        }
+
+        using (Tensor<float> inputTensor = new Tensor<float>(new TensorShape(batchSize, 2), inputArray))
+        {
+            inferenceWorker.Schedule(inputTensor);
+            Tensor<float> outputTensor = inferenceWorker.PeekOutput() as Tensor<float>;
+            if (outputTensor == null) return new List<int>(new int[batchSize]);
+
+            float[] flatOutputs = outputTensor.DownloadToArray();
+            List<int> selectedActions = new List<int>();
+
+            for (int i = 0; i < batchSize; i++)
+            {
+                int maxAct = 0;
+                float maxVal = float.MinValue;
+                for (int act = 0; act < 4; act++)
+                {
+                    float val = flatOutputs[i * 4 + act];
+                    if (val > maxVal) { maxVal = val; maxAct = act; }
+                }
+                selectedActions.Add(maxAct);
+            }
+            return selectedActions;
+        }
+    }
+
+    string MakeJsonPayload(string command, List<float[]> statesList, List<float> rewards, List<bool> dones)
+    {
+        StringBuilder sb = new StringBuilder();
+        sb.Append("{");
+        sb.Append($"\"command\":\"{command}\",");
+
+        sb.Append("\"states\":[");
+        for (int i = 0; i < statesList.Count; i++)
+        {
+            sb.Append($"[{statesList[i][0].ToString("F6")},{statesList[i][1].ToString("F6")}]");
+            if (i < statesList.Count - 1) sb.Append(",");
+        }
+        sb.Append("],");
+
+        sb.Append("\"rewards\":[");
+        for (int i = 0; i < rewards.Count; i++)
+        {
+            sb.Append(rewards[i].ToString("F6"));
+            if (i < rewards.Count - 1) sb.Append(",");
+        }
+        sb.Append("],");
+
+        sb.Append("\"dones\":[");
+        for (int i = 0; i < dones.Count; i++)
+        {
+            sb.Append(dones[i].ToString().ToLower());
+            if (i < dones.Count - 1) sb.Append(",");
+        }
+        sb.Append("]");
+        sb.Append("}");
+        return sb.ToString();
+    }
+
+    void ApplyActionsToAgents(List<int> actions)
+    {
+        for (int i = 0; i < agents.Count; i++)
+        {
+            Vector3 moveDir = Vector3.zero;
+            switch (actions[i])
+            {
+                case 0: moveDir = Vector3.forward; break;
+                case 1: moveDir = Vector3.back; break;
+                case 2: moveDir = Vector3.left; break;
+                case 3: moveDir = Vector3.right; break;
+            }
+            agents[i].Translate(moveDir * moveSpeed * Time.fixedDeltaTime, Space.Self);
+        }
+    }
+
+    void SendDataAndReceiveAction(string jsonPayload)
+    {
+        if (stream == null || !client.Connected) return;
+        try
+        {
+            byte[] sendBytes = Encoding.UTF8.GetBytes(jsonPayload);
+            stream.Write(sendBytes, 0, sendBytes.Length);
+
+            int bytesRead = stream.Read(receiveBuffer, 0, receiveBuffer.Length);
+            if (bytesRead > 0)
+            {
+                string rawResponse = Encoding.UTF8.GetString(receiveBuffer, 0, bytesRead);
+                string[] lines = rawResponse.Split('\n');
+                if (lines.Length > 0 && !string.IsNullOrEmpty(lines[0]))
+                {
+                    ActionData actionData = JsonUtility.FromJson<ActionData>(lines[0]);
+                    if (actionData != null && actionData.actions != null)
+                    {
+                        ApplyActionsToAgents(actionData.actions);
+                    }
+                }
+            }
+        }
+        catch (Exception) { }
     }
 
     void OnDestroy()
     {
-        recvThread?.Abort();
-        sw?.Close();
-        sr?.Close();
-        tcp?.Close();
-        inferWorker?.Dispose();
-        DestroyAll();
+        if (stream != null) stream.Close();
+        if (client != null) client.Close();
+        if (inferenceWorker != null) inferenceWorker.Dispose();
     }
-
-    // ═════════════════════════════════════════════════════════════
-    //  초기화
-    // ═════════════════════════════════════════════════════════════
-    void ConnectServer()
-    {
-        tcp = new TcpClient(serverIP, serverPort);
-        var stream = tcp.GetStream();
-        sw = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
-        sr = new StreamReader(stream, Encoding.UTF8);
-        recvThread = new Thread(RecvLoop) { IsBackground = true };
-        recvThread.Start();
-        Debug.Log($"[RL] 서버 연결: {serverIP}:{serverPort}");
-    }
-
-    void RecvLoop()    // 백그라운드 스레드 ─ 소켓에서 줄 단위로 읽어 큐에 적재
-    {
-        try
-        {
-            while (true)
-            {
-                var line = sr.ReadLine();
-                if (line == null) break;
-                lock (qLock) recvQ.Enqueue(line);
-            }
-        }
-        catch (Exception e) { Debug.LogWarning($"[RL] recv 종료: {e.Message}"); }
-    }
-
-    void InitInference()
-    {
-        if (onnxModel == null) { Debug.LogError("[RL] onnxModel 이 할당되지 않았습니다."); return; }
-        var model = ModelLoader.Load(onnxModel);
-        inferWorker = new Worker(model, backendType);
-        Debug.Log($"[RL] 추론 모드  backend={backendType}");
-    }
-
-    // ═════════════════════════════════════════════════════════════
-    //  에피소드 루프 (최상위)
-    // ═════════════════════════════════════════════════════════════
-    async Awaitable EpisodeLoopAsync()
-    {
-        while (true)
-        {
-            SpawnAll();
-            episode++;
-            totalReward = 0f;
-
-            // ── 학습 / 추론 경로 완전 분리 ──────────────────────
-            if (useInference)
-                await RunInferenceEpisodeAsync();
-            else
-                await RunTrainingEpisodeAsync();
-
-            Debug.Log($"[RL] Episode {episode:D4}  reward: {totalReward:F2}");
-            DestroyAll();
-            await Awaitable.NextFrameAsync();   // Destroy 반영 1프레임 대기
-        }
-    }
-
-    // ═════════════════════════════════════════════════════════════
-    //  학습 에피소드  (Python 서버 ↔ 소켓)
-    // ═════════════════════════════════════════════════════════════
-    async Awaitable RunTrainingEpisodeAsync()
-    {
-        // 첫 스텝: 초기 관측 전송 (reward=0, done=false)
-        SendToServer(isFirst: true);
-        string initResp = await WaitResponseAsync();
-        ApplyActions(initResp);
-
-        while (true)
-        {
-            // 행동 적용 후 상태(보상/done) 전송
-            SendToServer(isFirst: false);
-
-            if (AllDone())
-            {
-                // 터미널 전환을 Python 이 저장하도록 응답 1회 수신
-                await WaitResponseAsync();
-                break;
-            }
-
-            string resp = await WaitResponseAsync();
-            ApplyActions(resp);
-        }
-    }
-
-    void SendToServer(bool isFirst)
-    {
-        var sb = new StringBuilder("{\"type\":\"step\",\"agents\":[");
-        for (int i = 0; i < numAgents; i++)
-        {
-            var (ang, dd) = ComputeObs(i);
-            float rew = isFirst ? 0f : states[i].reward;
-            bool done = !isFirst && states[i].done;
-            sb.Append($"{{\"id\":{i},\"obs\":[{ang:F4},{dd:F4}]," +
-                      $"\"reward\":{rew:F4},\"done\":{(done ? "true" : "false")}}}");
-            if (i < numAgents - 1) sb.Append(',');
-        }
-        sb.Append("]}");
-        sw.WriteLine(sb);
-    }
-
-    async Awaitable<string> WaitResponseAsync()
-    {
-        while (true)
-        {
-            lock (qLock) if (recvQ.Count > 0) return recvQ.Dequeue();
-            await Awaitable.NextFrameAsync();
-        }
-    }
-
-    void ApplyActions(string json)
-    {
-        // {"actions":[1,0,2,...]}
-        var resp = JsonUtility.FromJson<ActionMsg>(json);
-        for (int i = 0; i < numAgents; i++)
-        {
-            if (states[i].done) continue;
-            StepAgent(i, resp.actions[i]);
-        }
-    }
-
-    // ═════════════════════════════════════════════════════════════
-    //  추론 에피소드  (Inference Engine 로컬 실행)
-    // ═════════════════════════════════════════════════════════════
-    //  ※ 이 경로에는 소켓 대기가 전혀 없으므로 멈추지 않는다.
-    //  ※ 활성 에이전트를 배치로 묶어 추론 1회/프레임으로 효율화.
-    async Awaitable RunInferenceEpisodeAsync()
-    {
-        var activeIdx = new List<int>(numAgents);
-
-        while (!AllDone())
-        {
-            // 활성 에이전트 인덱스 수집
-            activeIdx.Clear();
-            for (int i = 0; i < numAgents; i++)
-                if (!states[i].done) activeIdx.Add(i);
-
-            // 배치 입력 텐서 구성  shape (activeCount, 2)
-            int n = activeIdx.Count;
-            var inputData = new float[n * 2];
-            for (int j = 0; j < n; j++)
-            {
-                var (ang, dd) = ComputeObs(activeIdx[j]);
-                inputData[j * 2] = ang;
-                inputData[j * 2 + 1] = dd;
-            }
-
-            // 추론
-            int[] actions = await BatchInferAsync(inputData, n);
-
-            // 행동 적용
-            for (int j = 0; j < n; j++)
-                StepAgent(activeIdx[j], actions[j]);
-
-            await Awaitable.NextFrameAsync();
-        }
-    }
-
-    async Awaitable<int[]> BatchInferAsync(float[] inputData, int batchSize)
-    {
-        using var input = new Tensor<float>(new TensorShape(batchSize, 2), inputData);
-        inferWorker.Schedule(input);
-
-        var outTensor = inferWorker.PeekOutput("q_values") as Tensor<float>;
-
-        // 비동기 CPU 읽기  (GPU 백엔드 사용 시에도 블록 없이 동작)
-        using var result = await outTensor.ReadbackAndCloneAsync();
-
-        var actions = new int[batchSize];
-        for (int j = 0; j < batchSize; j++)
-        {
-            int best = 0;
-            for (int k = 1; k < 3; k++)
-                if (result[j, k] > result[j, best]) best = k;
-            actions[j] = best;
-        }
-        return actions;
-    }
-
-    // ═════════════════════════════════════════════════════════════
-    //  에이전트 스텝 / 관측 계산
-    // ═════════════════════════════════════════════════════════════
-    void StepAgent(int i, int action)
-    {
-        // 회전  (0=좌, 1=직진, 2=우)
-        if (action == 0) states[i].heading -= turnDeg;
-        else if (action == 2) states[i].heading += turnDeg;
-
-        // 이동  (heading 0° = +Z, 시계방향 양수)
-        float rad = states[i].heading * Mathf.Deg2Rad;
-        var fwd = new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
-        states[i].pos += fwd * moveSpeed;
-
-        // 비주얼 갱신
-        agentGOs[i].transform.SetPositionAndRotation(
-            states[i].pos,
-            Quaternion.Euler(0f, states[i].heading, 0f));
-
-        // 보상 계산
-        float dist = Vector3.Distance(states[i].pos, states[i].targetPos);
-        float delta = states[i].prevDist - dist;   // + = 가까워짐
-        states[i].reward = delta - stepPenalty;
-        states[i].prevDist = dist;
-        states[i].steps++;
-
-        // 종료 판정
-        if (dist < successDist)
-        {
-            states[i].reward += successBonus;
-            states[i].done = true;
-            SetColor(i, Color.green);
-        }
-        else if (states[i].steps >= maxSteps)
-        {
-            states[i].done = true;
-            SetColor(i, Color.red);
-        }
-
-        totalReward += states[i].reward;
-    }
-
-    (float angleNorm, float distDelta) ComputeObs(int i)
-    {
-        float rad = states[i].heading * Mathf.Deg2Rad;
-        var fwd = new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
-        var dir = (states[i].targetPos - states[i].pos).normalized;
-
-        float angle = Vector3.SignedAngle(fwd, dir, Vector3.up);
-        float angleNorm = Mathf.Clamp(angle / 180f, -1f, 1f);
-
-        float dist = Vector3.Distance(states[i].pos, states[i].targetPos);
-        float delta = Mathf.Clamp(
-            (states[i].prevDist - dist) / Mathf.Max(moveSpeed, 1e-5f), -1f, 1f);
-
-        return (angleNorm, delta);
-    }
-
-    bool AllDone()
-    {
-        foreach (var s in states) if (!s.done) return false;
-        return true;
-    }
-
-    // ═════════════════════════════════════════════════════════════
-    //  스폰 / 제거  (에피소드 단위 일괄)
-    // ═════════════════════════════════════════════════════════════
-    void SpawnAll()
-    {
-        agentGOs = new GameObject[numAgents];
-        targetGOs = new GameObject[numTarget];
-        states = new AgentState[numAgents];
-
-        for (int i = 0; i < numTarget; i++)
-        {
-            Vector3 tPos;
-            tPos = RandPos();
-            targetGOs[i] = Instantiate(targetPrefab, tPos, Quaternion.identity);
-        }
-
-        for (int i = 0; i < numAgents; i++)
-        {
-            Vector3 aPos;
-            int RanIndex = UnityEngine.Random.Range(0, numTarget);
-
-            var tPos = targetGOs[RanIndex].transform.position;
-
-            do { aPos = RandPos(); }
-            while (Vector3.Distance(aPos, tPos) < minDist);
-
-            float h = UnityEngine.Random.Range(0f, 360f);
-            agentGOs[i] = Instantiate(agentPrefab, aPos, Quaternion.Euler(0f, h, 0f));
-
-
-            states[i] = new AgentState
-            {
-                pos = aPos,
-                heading = h,
-                targetPos = tPos,
-                prevDist = Vector3.Distance(aPos, tPos),
-            };
-        }
-    }
-
-    void DestroyAll()
-    {
-        if (agentGOs != null) foreach (var o in agentGOs) if (o) Destroy(o);
-        if (targetGOs != null) foreach (var o in targetGOs) if (o) Destroy(o);
-        agentGOs = null; targetGOs = null;
-    }
-
-    Vector3 RandPos()
-    {
-        float r = UnityEngine.Random.Range(minDist, spawnRadius);
-        float ang = UnityEngine.Random.Range(0f, 360f) * Mathf.Deg2Rad;
-        return new Vector3(Mathf.Cos(ang) * r, 0f, Mathf.Sin(ang) * r);
-    }
-
-    void SetColor(int i, Color c)
-        => agentGOs[i]?.GetComponent<Renderer>()?.material.SetColor("_Color", c);
-
-    // ═════════════════════════════════════════════════════════════
-    //  ONNX 수동 export  (UI 버튼 등에서 호출)
-    // ═════════════════════════════════════════════════════════════
-    public void RequestExport()
-    {
-        if (useInference || sw == null) return;
-        sw.WriteLine("{\"type\":\"export\"}");
-        Debug.Log("[RL] ONNX export 요청 전송");
-    }
-
-    // ── JSON 파싱용 ──────────────────────────────────────────────
-    [Serializable] class ActionMsg { public int[] actions; }
 }
