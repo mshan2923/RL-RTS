@@ -1,291 +1,360 @@
-import socket
-import json
+"""
+train_server_ppo.py  ─  PPO 학습 서버 (캐릭터 이동: vx, vz 정규화)
+=================================================================
+행동 (연속 2차원):
+  action[0] = vx  ∈ [-1, 1]   (좌/우)
+  action[1] = vz  ∈ [-1, 1]   (아래/위)
+  → Unity 에서 Vector3(vx,0,vz).normalized * moveSpeed 로 적용
+    = 항상 일정 속도, 방향만 결정 (캐릭터처럼)
+
+관측 (2개):
+  obs[0] = 에이전트 → 목표 월드 X 방향 성분 (정규화)
+  obs[1] = 에이전트 → 목표 월드 Z 방향 성분 (정규화)
+
+[export / 종료 수정]
+  - conn.settimeout(0.3) → readline 이 블록되지 않아 export 즉시 반응
+  - KeyboardInterrupt → ONNX export 후 정상 종료
+  - export 에러 시 연결 유지, 에러 로그 출력
+
+프로토콜: 개행 구분 JSON  포트 9000
+  Unity→Python  {"type":"step","agents":[{"id":0,"obs":[dx,dz],"reward":r,"done":b},...]}
+  Python→Unity  {"actions":[vx0,vz0,vx1,vz1,...]}
+  Unity→Python  {"type":"export"}
+  Python→Unity  {"status":"ok","path":"..."} | {"status":"error","msg":"..."}
+  콘솔 'e'+Enter → ONNX export   Ctrl+C → export 후 종료
+"""
+
+import json, math, os, random, socket, sys, threading
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.distributions import Categorical
-import threading
-import os
+from torch.distributions import Normal
 
-# ==========================================
-# 1. 하이퍼파라미터 및 하드웨어 설정
-# ==========================================
-INPUT_DIM = 2    # 관측치: [목표물 방향, 거리 변화량]
-ACTION_DIM = 4   # 행동: 0(상), 1(하), 2(좌), 3(우) - 일반 캐릭터 이동
 
-# ==========================================
-# 2. PPO 뉴럴 네트워크 정의 (OOP 구조)
-# ==========================================
-class Actor(nn.Module):
-    """행동을 결정하는 정책 네트워크 (유니티 인퍼런스 엔진 수출용)"""
-    def __init__(self, input_dim, action_dim):
-        super(Actor, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 64),
-            nn.ReLU(),
-            nn.Linear(64, 64),
-            nn.ReLU(),
-            nn.Linear(64, action_dim)
+# ══════════════════════════════════════════════════════════════════
+#  관측 정규화
+# ══════════════════════════════════════════════════════════════════
+class RunningMeanStd:
+    def __init__(self, shape=(2,), eps=1e-4):
+        self.mean  = np.zeros(shape, np.float64)
+        self.var   = np.ones(shape,  np.float64)
+        self.count = eps
+
+    def update(self, x):
+        x = np.atleast_2d(np.asarray(x, np.float64))
+        n, delta = x.shape[0], x.mean(0) - self.mean
+        tot = self.count + n
+        self.mean += delta * n / tot
+        self.var   = (self.var * self.count + x.var(0) * n
+                      + delta**2 * self.count * n / tot) / tot
+        self.count = tot
+
+    def normalize(self, x):
+        return ((np.asarray(x, np.float32) - self.mean)
+                / (np.sqrt(self.var) + 1e-8)).astype(np.float32)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Actor-Critic
+# ══════════════════════════════════════════════════════════════════
+class ActorCritic(nn.Module):
+    def __init__(self, obs_dim=2, act_dim=2, hidden=64):
+        super().__init__()
+        self.backbone = nn.Sequential(
+            nn.Linear(obs_dim, hidden), nn.Tanh(),
+            nn.Linear(hidden, hidden),  nn.Tanh(),
         )
-    def forward(self, x):
-        return self.net(x)
+        self.actor_mean = nn.Linear(hidden, act_dim)
+        self.log_std    = nn.Parameter(torch.zeros(act_dim) - 0.5)
+        self.critic     = nn.Linear(hidden, 1)
 
-class Critic(nn.Module):
-    """상태의 가치를 평가하는 가치 네트워크 (학습 서버 전용)"""
-    def __init__(self, input_dim):
-        super(Critic, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 64),
-            nn.ReLU(),
-            nn.Linear(64, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1)
+        for layer in self.backbone:
+            if isinstance(layer, nn.Linear):
+                nn.init.orthogonal_(layer.weight, gain=math.sqrt(2))
+                nn.init.zeros_(layer.bias)
+        nn.init.orthogonal_(self.actor_mean.weight, gain=0.01)
+        nn.init.zeros_(self.actor_mean.bias)
+        nn.init.orthogonal_(self.critic.weight, gain=1.0)
+        nn.init.zeros_(self.critic.bias)
+
+    def get_action_and_value(self, obs, action=None):
+        feat = self.backbone(obs)
+        mean = torch.tanh(self.actor_mean(feat))
+        std  = self.log_std.exp().expand_as(mean)
+        dist = Normal(mean, std)
+        if action is None:
+            action = dist.sample().clamp(-1.0, 1.0)
+        log_prob = dist.log_prob(action).sum(-1)
+        entropy  = dist.entropy().sum(-1)
+        value    = self.critic(feat).squeeze(-1)
+        return action, log_prob, entropy, value
+
+    def get_value(self, obs):
+        return self.critic(self.backbone(obs)).squeeze(-1)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  PPO 에이전트
+# ══════════════════════════════════════════════════════════════════
+class PPOAgent:
+    CKPT = "checkpoints/ppo.pt"
+    ONNX = "checkpoints/ppo_actor.onnx"
+
+    def __init__(self, lr=3e-4, gamma=0.99, lam=0.95,
+                 clip=0.2, n_epochs=8, batch_size=64,
+                 vf_coef=0.5, ent_coef=0.01, max_grad_norm=0.5):
+        self.gamma, self.lam = gamma, lam
+        self.clip, self.n_epochs, self.batch_size = clip, n_epochs, batch_size
+        self.vf_coef, self.ent_coef = vf_coef, ent_coef
+        self.max_grad_norm = max_grad_norm
+
+        self.ac  = ActorCritic()
+        self.opt = torch.optim.Adam(self.ac.parameters(), lr=lr, eps=1e-5)
+
+    @torch.no_grad()
+    def select(self, obs_np):
+        obs = torch.tensor(obs_np, dtype=torch.float32).unsqueeze(0)
+        act, lp, _, val = self.ac.get_action_and_value(obs)
+        return act.squeeze(0).tolist(), float(lp), float(val)
+
+    @staticmethod
+    def _gae(rewards, values, dones, last_val, gamma, lam):
+        T, adv, g = len(rewards), [0.0]*len(rewards), 0.0
+        for t in reversed(range(T)):
+            nxt  = values[t+1] if t < T-1 else last_val
+            mask = 1.0 - float(dones[t])
+            delta = rewards[t] + gamma * nxt * mask - values[t]
+            g     = delta + gamma * lam * mask * g
+            adv[t] = g
+        return adv, [a+v for a,v in zip(adv, values)]
+
+    def update(self, trajectories):
+        all_obs, all_acts, all_lps, all_rets, all_advs = [], [], [], [], []
+        for traj in trajectories:
+            lv = 0.0 if traj["dones"][-1] else float(
+                self.ac.get_value(torch.tensor([traj["obs"][-1]], dtype=torch.float32)))
+            adv, ret = self._gae(traj["rewards"], traj["values"],
+                                  traj["dones"], lv, self.gamma, self.lam)
+            all_obs.extend(traj["obs"]); all_acts.extend(traj["actions"])
+            all_lps.extend(traj["log_probs"])
+            all_rets.extend(ret); all_advs.extend(adv)
+
+        obs  = torch.tensor(all_obs,  dtype=torch.float32)
+        acts = torch.tensor(all_acts, dtype=torch.float32)
+        lps  = torch.tensor(all_lps,  dtype=torch.float32)
+        rets = torch.tensor(all_rets, dtype=torch.float32)
+        advs = torch.tensor(all_advs, dtype=torch.float32)
+        advs = (advs - advs.mean()) / (advs.std() + 1e-8)
+
+        total, cnt = 0.0, 0
+        for _ in range(self.n_epochs):
+            for b in torch.randperm(len(obs)).split(self.batch_size):
+                _, new_lp, ent, vals = self.ac.get_action_and_value(obs[b], acts[b])
+                ratio    = (new_lp - lps[b]).exp()
+                a        = advs[b]
+                loss     = (-torch.min(ratio*a, ratio.clamp(1-self.clip, 1+self.clip)*a).mean()
+                            + self.vf_coef * 0.5 * (vals - rets[b]).pow(2).mean()
+                            - self.ent_coef * ent.mean())
+                self.opt.zero_grad(); loss.backward()
+                nn.utils.clip_grad_norm_(self.ac.parameters(), self.max_grad_norm)
+                self.opt.step()
+                total += loss.item(); cnt += 1
+
+        return total / max(cnt, 1)
+
+    def save(self, path=CKPT):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        torch.save(self.ac.state_dict(), path)
+        print(f"[Save] {path}")
+
+    def export_onnx(self, path=ONNX):
+        """결정론적 Actor 만 추출 (Unity Inference Engine 용)"""
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+        class _Actor(nn.Module):
+            def __init__(self, ac):
+                super().__init__()
+                self.backbone, self.actor_mean = ac.backbone, ac.actor_mean
+            def forward(self, obs):
+                return torch.tanh(self.actor_mean(self.backbone(obs)))
+
+        actor = _Actor(self.ac)
+        actor.eval()
+        torch.onnx.export(
+            actor, torch.zeros(1, 2), path,
+            input_names=["obs"], output_names=["action"],
+            dynamic_axes={"obs": {0: "batch"}, "action": {0: "batch"}},
+            opset_version=13, dynamo=False,
         )
-    def forward(self, x):
-        return self.net(x)
+        actor.train(); self.ac.train()
+        print(f"[Export] ONNX → {path}")
+        print(f"         obs(batch,2=[dx_norm,dz_norm]) → action(batch,2=[vx,vz]) ∈ [-1,1]")
+        print(f"         Unity: moveDir = Vector3(vx,0,vz).normalized * moveSpeed")
 
-# ==========================================
-# 3. PPO 학습 및 에이전트 관리 클래스
-# ==========================================
-class PPOManager:
-    def __init__(self, lr_actor=0.0003, lr_critic=0.001, gamma=0.99, K_epochs=5, eps_clip=0.2):
-        self.gamma = gamma
-        self.eps_clip = eps_clip
-        self.K_epochs = K_epochs
-        
-        self.actor = Actor(INPUT_DIM, ACTION_DIM)
-        self.critic = Critic(INPUT_DIM)
-        
-        self.optimizer_actor = optim.Adam(self.actor.parameters(), lr=lr_actor)
-        self.optimizer_critic = optim.Adam(self.critic.parameters(), lr=lr_critic)
-        
-        self.MseLoss = nn.MSELoss()
-        
-        # 멀티 에이전트 데이터 수집용 버퍼
-        self.states = []
-        self.actions = []
-        self.logprobs = []
-        self.rewards = []
-        self.is_terminals = []
-        self.num_agents = 1
 
-    def select_action(self, state_list):
-        """유니티 내 모든 에이전트의 관측치를 한 번에 받아 배치 처리로 행동 선택"""
-        state_tensor = torch.FloatTensor(state_list)
-        with torch.no_grad():
-            logits = self.actor(state_tensor)
-            dist = Categorical(logits=logits)
-            action = dist.sample()
-            action_logprob = dist.log_prob(action)
-            
-        return action.tolist(), action_logprob.tolist()
+# ══════════════════════════════════════════════════════════════════
+#  PPO 서버
+# ══════════════════════════════════════════════════════════════════
+class PPOServer:
+    RECV_TIMEOUT = 0.3   # readline 타임아웃 (초) — export 플래그 체크 주기
 
-    def store_transition(self, states, actions, logprobs, rewards, dones):
-        """멀티 에이전트의 스텝 데이터를 버퍼에 저장"""
-        self.num_agents = len(states)
-        self.states.extend(states)
-        self.actions.extend(actions)
-        self.logprobs.extend(logprobs)
-        self.rewards.extend(rewards)
-        self.is_terminals.extend(dones)
+    def __init__(self, host="0.0.0.0", port=9000, save_every=50):
+        self.host, self.port = host, port
+        self.save_every = save_every
 
-    def update(self):
-        """수집된 데이터를 바탕으로 에포크만큼 가중치 업데이트"""
-        if len(self.states) == 0:
-            return
-            
-        total_samples = len(self.states)
-        num_steps = total_samples // self.num_agents
-        
-        # 동기식 멀티 에이전트 환경에 맞게 리턴(Returns) 계산 분리
-        rewards_targets = [0.0] * total_samples
-        for a in range(self.num_agents):
-            discounted_reward = 0
-            for s in range(num_steps - 1, -1, -1):
-                idx = s * self.num_agents + a
-                if self.is_terminals[idx]:
-                    discounted_reward = 0
-                discounted_reward = self.rewards[idx] + (self.gamma * discounted_reward)
-                rewards_targets[idx] = discounted_reward
-                
-        # 텐서 변환
-        old_states = torch.FloatTensor(self.states)
-        old_actions = torch.LongTensor(self.actions)
-        old_logprobs = torch.FloatTensor(self.logprobs)
-        rewards = torch.FloatTensor(rewards_targets)
-        
-        # 보상 정규화로 안정성 확보
-        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
-        
-        # K-epochs 최적화 루프
-        for _ in range(self.K_epochs):
-            logits = self.actor(old_states)
-            dist = Categorical(logits=logits)
-            logprobs = dist.log_prob(old_actions)
-            dist_entropy = dist.entropy()
-            state_values = self.critic(old_states).squeeze()
-            
-            # PPO Clip 손실 계산
-            ratios = torch.exp(logprobs - old_logprobs)
-            advantages = rewards - state_values.detach()
-            
-            surr1 = ratios * advantages
-            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
-            
-            loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
-            
-            # 가중치 업데이트
-            self.optimizer_actor.zero_grad()
-            self.optimizer_critic.zero_grad()
-            loss.mean().backward()
-            self.optimizer_actor.step()
-            self.optimizer_critic.step()
-            
-        # 데이터 비우기
-        self.states.clear()
-        self.actions.clear()
-        self.logprobs.clear()
-        self.rewards.clear()
-        self.is_terminals.clear()
-        print("[Server] >>> PPO 신경망 가중치 최적화 완료 <<<")
+        self.agent   = PPOAgent()
+        self.obs_rms = RunningMeanStd(shape=(2,))
+        self.traj    = {}   # {agent_id: {"obs":[], ...}}
+        self.prev    = {}   # {agent_id: (obs, action, log_prob, value)}
 
-    def export_onnx(self):
-            if not hasattr(self, 'actor') or self.actor is None:
-                print("[Error] 내보낼 모델 객체(actor)가 존재하지 않아.")
-                return
+        self.episode     = 0
+        self._export_req = False
+        self._shutdown   = threading.Event()
 
-            import os
-            import torch
-            import onnx  # 이 부분이 추가되었어!
+    def _empty_traj(self):
+        return {"obs": [], "actions": [], "log_probs": [],
+                "values": [], "rewards": [], "dones": []}
 
-            dummy_input = torch.randn(1, 2)
-            
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            onnx_path = os.path.join(script_dir, "PPO_Policy.onnx")
+    # ── 스텝 처리 ─────────────────────────────────────────────
+    def _handle_step(self, msg):
+        flat_actions = []
+        all_done = True
 
-            try:
-                # 1. 먼저 문제의 매개변수를 빼고 기본 구조로 익스포트를 진행해
-                torch.onnx.export(
-                    self.actor,                 
-                    (dummy_input,),
-                    onnx_path,
-                    export_params=True,
-                    opset_version=15,
-                    do_constant_folding=True,
-                    input_names=['input'],
-                    output_names=['output'],
-                    dynamic_axes={
-                        'input': {0: 'batch_size'},
-                        'output': {0: 'batch_size'}
-                    }
-                )
-                
-                # 2. 내보낸 ONNX 파일을 다시 불러와서 강제로 단일 파일로 덮어씌워 (*.onnx.data 제거)
-                loaded_model = onnx.load(onnx_path)
-                onnx.save(loaded_model, onnx_path, save_as_external_data=False)
-                
-                print(f"[Python] 외부 파일 없이 단일 ONNX 파일 익스포트 성공: {onnx_path}")
-            except Exception as e:
-                print(f"[Python] ONNX 내보내기 실패: {e}")
+        for a in msg["agents"]:
+            aid, raw, rew, done = a["id"], a["obs"], a["reward"], a["done"]
 
-# ==========================================
-# 4. 실시간 콘솔 명령어 처리 스레드
-# ==========================================
-def console_command_loop(ppo_manager):
-    print("사용 가능한 콘솔 명령어 [ save: ONNX 추출 | exit: 서버 종료 ]")
-    while True:
-        cmd = input().strip().lower()
-        if cmd == "save":
-            ppo_manager.export_onnx()
-        elif cmd == "exit":
-            print("서버를 안전하게 종료할게.")
-            os._exit(0)
+            self.obs_rms.update(np.array(raw))
+            obs = self.obs_rms.normalize(np.array(raw)).tolist()
 
-# ==========================================
-# 5. 메인 네트워크 소켓 서버 구동
-# ==========================================
-def main():
-    ppo = PPOManager()
-    
-    # 키보드 입력 처리를 위한 백그라운드 스레드 가동 (수동 ONNX 추출용)
-    cmd_thread = threading.Thread(target=console_command_loop, args=(ppo,), daemon=True)
-    cmd_thread.start()
-    
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('127.0.0.1', 5000))
-    server_socket.listen(1)
-    print("[Server] 파이썬 PPO 학습 서버가 127.0.0.1:5000 에서 대기 중이야.")
-    
-    # 이전 프레임의 연산 추적용 변수
-    last_states = None
-    last_actions = None
-    last_logprobs = None
-    
-    while True:
-        conn, addr = server_socket.accept()
-        print(f"[Server] 유니티 그래픽 환경 연결됨: {addr}")
-        
-        buffer = ""
-        while True:
-            data = conn.recv(4096).decode('utf-8')
-            if not data:
-                break
-                
-            buffer += data
-            while "\n" in buffer:
-                line, buffer = buffer.split("\n", 1)
-                if not line.strip():
-                    continue
-                    
+            if aid in self.prev:
+                po, pa, plp, pv = self.prev[aid]
+                if aid not in self.traj:
+                    self.traj[aid] = self._empty_traj()
+                t = self.traj[aid]
+                t["obs"].append(po); t["actions"].append(pa)
+                t["log_probs"].append(plp); t["values"].append(pv)
+                t["rewards"].append(rew); t["dones"].append(float(done))
+                if done:
+                    del self.prev[aid]
+
+            action, lp, val = self.agent.select(obs)
+            flat_actions.extend(action)
+
+            if not done:
+                self.prev[aid] = (obs, action, lp, val)
+                all_done = False
+
+        if all_done and self.traj:
+            self._run_ppo_update()
+
+        return {"actions": flat_actions}
+
+    def _run_ppo_update(self):
+        self.episode += 1
+        trajs  = list(self.traj.values())
+        n_steps = sum(len(t["rewards"]) for t in trajs)
+        loss   = self.agent.update(trajs)
+        print(f"[Ep {self.episode:4d}]  steps={n_steps}  loss={loss:.4f}")
+        if self.episode % self.save_every == 0:
+            self.agent.save()
+        self.traj.clear(); self.prev.clear()
+
+    # ── export ────────────────────────────────────────────────
+    def _do_export(self):
+        try:
+            self.agent.save()
+            self.agent.export_onnx()
+            return {"status": "ok", "path": PPOAgent.ONNX}
+        except Exception as e:
+            print(f"[Export ERROR] {e}")
+            return {"status": "error", "msg": str(e)}
+
+    def _stdin_watcher(self):
+        for line in sys.stdin:
+            cmd = line.strip().lower()
+            if cmd == "e":
+                self._export_req = True
+                print("[stdin] export 요청 접수")
+            elif cmd in ("q", "quit", "exit"):
+                self._shutdown.set()
+
+    # ── 서버 루프 ─────────────────────────────────────────────
+    def run(self):
+        threading.Thread(target=self._stdin_watcher, daemon=True).start()
+
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.settimeout(1.0)   # accept 도 타임아웃 → Ctrl+C 즉시 반응
+        srv.bind((self.host, self.port))
+        srv.listen(1)
+        print(f"[PPO Server] {self.host}:{self.port} 대기 중...")
+        print(f"  'e' + Enter → ONNX export")
+        print(f"  'q' + Enter 또는 Ctrl+C → export 후 종료\n")
+
+        try:
+            while not self._shutdown.is_set():
                 try:
-                    request = json.loads(line)
-                    cmd = request.get("command")
-                    states = request.get("states")
-                    
-                    if cmd == "step":
-                        rewards = request.get("rewards")
-                        dones = request.get("dones")
-                        
-                        # 이전 행동의 결과가 존재하면 학습 버퍼에 누적
-                        if last_states is not None:
-                            ppo.store_transition(last_states, last_actions, last_logprobs, rewards, dones)
-                        
-                        # 현재 상태를 바탕으로 새로운 배치 행동 결정
-                        actions, logprobs = ppo.select_action(states)
-                        
-                        last_states = states
-                        last_actions = actions
-                        last_logprobs = logprobs
-                        
-                        # 유니티로 즉시 전달
-                        response = json.dumps({"actions": actions}) + "\n"
-                        conn.sendall(response.encode('utf-8'))
-                        
-                        # 배치 샘플 수량이 기준치를 넘기면 최적화 수행 (예: 1024개 샘플)
-                        if len(ppo.states) >= 1024:
-                            ppo.update()
-                            last_states = None  # 연속성 데이터 초기화
-                            
-                    elif cmd == "reset":
-                        # 에피소드가 끝나서 전체 유닛이 일괄 재배치 되었을 때 진입
-                        last_states = None
-                        last_actions = None
-                        last_logprobs = None
-                        
-                        actions, logprobs = ppo.select_action(states)
-                        last_states = states
-                        last_actions = actions
-                        last_logprobs = logprobs
-                        
-                        response = json.dumps({"actions": actions}) + "\n"
-                        conn.sendall(response.encode('utf-8'))
-                        print("[Server] >>> 에피소드 종료: 일괄 제거 및 초기 재배치 완료 <<<")
-                        
-                except Exception as e:
-                    print(f"[Error] 데이터 파싱 에러: {e}")
-                    
-        conn.close()
-        print("[Server] 유니티 클라이언트 연결 종료.")
+                    conn, addr = srv.accept()
+                except socket.timeout:
+                    continue
 
+                print(f"[Server] Unity 연결: {addr}")
+                self.traj.clear(); self.prev.clear()
+
+                # ── 핵심: readline 타임아웃으로 export 즉시 반응 ──
+                conn.settimeout(self.RECV_TIMEOUT)
+
+                try:
+                    rf = conn.makefile("r", encoding="utf-8")
+                    wf = conn.makefile("w", encoding="utf-8")
+
+                    while not self._shutdown.is_set():
+                        # export 플래그 확인 (RECV_TIMEOUT 마다 여기 도달)
+                        if self._export_req:
+                            resp = self._do_export()
+                            try: wf.write(json.dumps(resp) + "\n"); wf.flush()
+                            except Exception: pass
+                            self._export_req = False
+
+                        try:
+                            line = rf.readline()
+                        except socket.timeout:
+                            continue     # 타임아웃 → 상단으로 (export 체크)
+                        except OSError:
+                            break
+
+                        if not line:
+                            break
+
+                        msg = json.loads(line)
+                        t   = msg.get("type")
+
+                        if t == "step":
+                            resp = self._handle_step(msg)
+                        elif t == "export":
+                            resp = self._do_export()
+                        else:
+                            resp = {"error": f"unknown: {t}"}
+
+                        wf.write(json.dumps(resp) + "\n")
+                        wf.flush()
+
+                except Exception as e:
+                    print(f"[Server] 연결 오류: {e}")
+                finally:
+                    conn.close()
+                    print("[Server] 재연결 대기...\n")
+
+        except KeyboardInterrupt:
+            print("\n[Server] Ctrl+C → export 후 종료")
+
+        finally:
+            print("[Server] ONNX export 중...")
+            self._do_export()
+            srv.close()
+            print("[Server] 종료 완료")
+
+
+# ══════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    main()
+    PPOServer().run()
