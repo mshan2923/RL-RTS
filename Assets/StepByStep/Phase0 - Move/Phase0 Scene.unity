@@ -621,11 +621,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7f5572863d45cf04eb2ff521a0bd4f97, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RL_StepByStep.PureMoveStepManager
-  runMode: 0
-  stepInterval: 0.1
+  runMode: 1
+  stepInterval: 0.02
   commsManagerBehaviour: {fileID: 1229933714}
-  onnxModel: {fileID: 0}
-  inferenceBackend: 512
+  onnxModel: {fileID: 5022602860645237092, guid: 559e1cb61f6ce344eb1f8a82c41da093, type: 3}
+  inferenceBackend: 256
 --- !u!1 &2120460505
 GameObject:
   m_ObjectHideFlags: 0
@@ -664,6 +664,7 @@ MonoBehaviour:
   _mapRadius: 5
   prevDist: 0
   hasPrevDist: 0
+  isResetTargetPos: 1
 --- !u!135 &2120460507
 SphereCollider:
   m_ObjectHideFlags: 0

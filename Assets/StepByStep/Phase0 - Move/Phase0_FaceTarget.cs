@@ -9,7 +9,7 @@ namespace RL_StepByStep
         public const float TargetReachedBonus = 10f;
         public const float DistRewardScale = 20f;
         public const float StepPenalty = -0.02f;
-        public const float TargetReachedDistance = 0.3f;
+        public const float TargetReachedDistance = 1f;
 
         public override PureMoveObservation Encode(PureMoveUnit self)
         {

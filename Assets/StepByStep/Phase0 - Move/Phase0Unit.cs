@@ -25,6 +25,8 @@ namespace RL_StepByStep
         private bool lastObservationWasDone;
         private bool hasStarted;
 
+        public bool isResetTargetPos;
+
         void Awake()
         {
             if (_unitId == 0) _unitId = GetInstanceID();
@@ -48,14 +50,13 @@ namespace RL_StepByStep
 
                 RandomizePosition();
                 PureMoveStepManager.Instance?.Register(this);
-                Debug.Log("Laze");
+                Debug.Log("Laze Start");
             }
 
         }
 
         Awaitable LazeStart()
         {
-
             return Awaitable.WaitForSecondsAsync(0.5f);
         }
 
@@ -80,6 +81,14 @@ namespace RL_StepByStep
         private void RandomizePosition()
         {
             axialPosition = new Vector2Int(Random.Range(-_mapRadius, _mapRadius + 1), Random.Range(-_mapRadius, _mapRadius + 1));
+
+            if (isResetTargetPos)
+            {
+                var pos = HexUtil.AxialToWorld(new Vector2Int(Random.Range(-_mapRadius, _mapRadius + 1), Random.Range(-_mapRadius, _mapRadius + 1)));
+            
+                targetTransform.position = new Vector3(pos.x, transform.position.y, pos.y);   
+            }
+            
             hasPrevDist = false;
             SyncTransform();
         }

@@ -205,6 +205,8 @@ def start_server(host="127.0.0.1", port=5555):
                     if train_step_count % 50 == 0:
                         print(f"[Step {step_count}] train_step={train_step_count} "
                               f"loss={loss:.4f} eps={epsilon:.3f} replay={len(replay_buffer)}")
+                        torch.save(q_net.state_dict(), 'checkpoint_model.pth')
+                        print(f"[{train_step_count}회 학습] 모델이 성공적으로 저장되었습니다.")
 
     except KeyboardInterrupt:
         print("서버 종료")

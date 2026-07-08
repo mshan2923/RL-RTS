@@ -17,7 +17,7 @@ class TinyQNet(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-def export_to_onnx(weights_path="model.pth", onnx_path="tiny_qnet.onnx"):
+def export_to_onnx(weights_path="checkpoint_model.pth", onnx_path="tiny_qnet.onnx"):
     # 모델 인스턴스 생성
     model = TinyQNet()
     
