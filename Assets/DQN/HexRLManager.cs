@@ -1,21 +1,6 @@
 /*
- * HexRLManager.cs
- * ─────────────────────────────────────────────────────────────────────────────
- * Pointy-top 육각 타일 강화학습 환경 매니저 (단일 파일)
- *
- * ▶ 학습 모드  : Python DQN 서버(HTTP POST)와 동기 통신, 모든 에이전트 일괄 처리
- * ▶ 추론 모드  : Unity Sentis(ONNX)로 서버 없이 독립 실행
- *
- * 설치 요구사항
- *   - Unity 2022.3 LTS 이상
- *   - com.unity.sentis (Package Manager)
- *   - Newtonsoft.Json  (Package Manager: com.unity.nuget.newtonsoft-json)
- *
- * 씬 설정
- *   1. 빈 GameObject에 HexRLManager 컴포넌트 추가
- *   2. Inspector에서 agentPrefab, tilePrefab, goalPrefab 연결
- *   3. 학습 시 isInferenceMode = false, 추론 시 true + onnxAsset 연결
- * ─────────────────────────────────────────────────────────────────────────────
+ * HexRLManager.cs  —  Pointy-top Hex RL 환경 매니저
+ * 필수: com.unity.inferenceengine / com.unity.nuget.newtonsoft-json
  */
 
 using System;
@@ -24,395 +9,484 @@ using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
-
 using Unity.InferenceEngine;
-
 using Newtonsoft.Json;
 
-// ═══════════════════════════════════════════════════════════════════
-// 1. 데이터 구조체 (JSON 직렬화)
-// ═══════════════════════════════════════════════════════════════════
+public enum SpeedMode { Observe = 1, Normal = 2, Fast = 3, Turbo = 4 }
+public enum RLMode { Training, Inference }
+
 [Serializable]
 public class AgentStepData
 {
-    public int id;
-    public float[] state;        // [dir_x, dir_z, delta_dist]
-    public float reward;
-    public bool done;
-    public float[] prev_state;   // null이면 첫 스텝
-    public int prev_action;  // -1이면 첫 스텝
+    public int id; public float[] state; public float reward;
+    public bool done; public float[] prev_state; public int prev_action;
 }
-
 [Serializable]
-public class StepRequest { public List<AgentStepData> agents; }
-
+public class StepRequest
+{
+    public List<AgentStepData> agents;
+    public bool is_episode_end;
+}
 [Serializable]
 public class StepResponse
 {
     public Dictionary<string, int> actions;
-    public float epsilon;
-    public int steps;
-    public float? loss;
+    public float epsilon; public int steps; public float? loss;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// 2. 에이전트 런타임 데이터
-// ═══════════════════════════════════════════════════════════════════
 public class HexAgent
 {
-    public int id;
-    public GameObject go;
-    public Vector2Int hexCoord;   // 현재 큐브 좌표 (offset)
-    public int action;     // 직전 행동 인덱스
-    public float[] prevState;
-    public int prevAction = -1;
-    public float prevDist;
-    public bool firstStep = true;
+    public int id; public GameObject go; public Vector2Int hexCoord;
+    public Vector2Int prevHexCoord; // ★ 추가: 내적 계산을 위한 직전 위치 저장용
+    public float[] prevState; public int prevAction = -1;
+    public float prevDist; public bool firstStep = true;
+    public Vector3 worldFrom, worldTo; public Coroutine moveCoroutine;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// 3. HexRLManager (MonoBehaviour)
-// ═══════════════════════════════════════════════════════════════════
 public class HexRLManager : MonoBehaviour
 {
-    // ── Inspector ────────────────────────────────────────────────
     [Header("Prefabs")]
-    public GameObject agentPrefab;
-    public GameObject tilePrefab;
-    public GameObject goalPrefab;
+    public GameObject agentPrefab, tilePrefab, goalPrefab;
 
     [Header("Grid")]
-    public int gridRadius = 5;    // 육각 그리드 반지름
-    public float hexSize = 1.0f; // 타일 중심 간 거리
+    public int gridRadius = 5;
+    public float hexSize = 1f;
+    public Vector3 tileOffset;
 
     [Header("Episode")]
-    public int agentCount = 4;
-    public int maxSteps = 200;
+    public int agentCount = 4, maxSteps = 200;
 
-    [Header("Server (학습 모드)")]
-    public bool isInferenceMode = false;
+    [Header("Speed")]
+    public SpeedMode speedMode = SpeedMode.Normal;
+
+    [Header("Mode")]
+    public RLMode currentMode = RLMode.Training;
+
+    [Header("Server (학습)")]
     public string serverUrl = "http://127.0.0.1:9000";
 
-    [Header("Inference (추론 모드)")]
-    public ModelAsset onnxAsset;     // Inspector에서 ONNX 파일 연결
-    public float inferenceTickSec = 0.1f;  // 추론 모드 스텝 간격
+    [Header("Inference")]
+    public ModelAsset modelAsset;
 
-    // ── Private ──────────────────────────────────────────────────
-    private List<Vector2Int> allTiles = new();
-    private List<HexAgent> agents = new();
-    private GameObject goalObj;
-    private Vector2Int goalHex;
-    private int stepCount;
-    private bool episodeRunning;
+    [Header("Debug")]
+    public bool debugLog = true;       // Inspector에서 켜고 끄기
+    public int debugAgentId = 0;      // 로그 찍을 에이전트 번호
 
-    // Sentis 런타임 (추론 모드)
-    private Model runtimeModel;
-    private Worker worker;
+    static readonly float[] Delay = { 0.4f, 0.1f, 0f, 0f };
+    static readonly float[] LerpDur = { 0.35f, 0.08f, 0f, 0f };
+    static readonly float[] TScales = { 1f, 1f, 1f, 4f };
+    int SI => (int)speedMode - 1;
 
-    // ── Pointy-top 육각 6방향 (offset row-odd) ───────────────────
-    // 인덱스:  0=NE  1=E   2=SE  3=SW  4=W   5=NW
-    // WASD 직관 매핑: 4=W(←), 1=E(→), 5=NW(↖), 0=NE(↗), 3=SW(↙), 2=SE(↘)
-    private static readonly Vector2Int[] HexDirs = new Vector2Int[6]
+    List<Vector2Int> allTiles = new();
+    List<HexAgent> agents = new();
+    GameObject goalObj; Vector2Int goalHex; int stepCount;
+    bool _running; SpeedMode _prevSpeed;
+    Model _model; Worker _worker;
+
+    // ════════════════════════════════════════════════════════════════
+    void Start()
     {
-        new( 1,  0),   // 0: NE
-        new( 1,  0),   // placeholder – 짝/홀 행마다 달라짐 (아래 함수 참조)
-        new( 0,  1),   // 2: SE
-        new(-1,  1),   // 3: SW
-        new(-1,  0),   // 4: W
-        new( 0, -1),   // 5: NW – NW(홀수행)
-    };
-
-    // ─────────────────────────────────────────────────────────────
-    // Pointy-top offset 이동: col은 행의 홀/짝에 따라 달라짐
-    // ─────────────────────────────────────────────────────────────
-    private Vector2Int HexNeighbor(Vector2Int h, int dir)
-    {
-        bool odd = (h.y & 1) == 1;
-        // Pointy-top offset directions (odd-r)
-        Vector2Int[] d = odd
-            ? new[]{ new Vector2Int(1,1), new Vector2Int(1,0), new Vector2Int(1,-1),
-                     new Vector2Int(0,-1), new Vector2Int(-1,0), new Vector2Int(0,1) }
-            : new[]{ new Vector2Int(0,1), new Vector2Int(1,0), new Vector2Int(0,-1),
-                     new Vector2Int(-1,-1), new Vector2Int(-1,0), new Vector2Int(-1,1) };
-        return h + d[dir];
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // 오프셋 좌표 → 월드 좌표 (Pointy-top)
-    // ─────────────────────────────────────────────────────────────
-    private Vector3 HexToWorld(Vector2Int h)
-    {
-        float x = hexSize * (h.x + 0.5f * (h.y & 1));
-        float z = hexSize * h.y * (Mathf.Sqrt(3f) / 2f);
-        return new Vector3(x, 0f, z);
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // Unity 생명주기
-    // ═══════════════════════════════════════════════════════════════
-    private void Start()
-    {
+        _prevSpeed = speedMode;
+        Time.timeScale = TScales[SI];
         BuildGrid();
-
-        if (isInferenceMode && onnxAsset != null)
-        {
-            runtimeModel = ModelLoader.Load(onnxAsset);
-            worker = new Worker(runtimeModel, BackendType.GPUCompute);
-            Debug.Log("[HexRL] Sentis 추론 모드 시작");
-            StartCoroutine(InferenceLoop());
-            return;
-        }
-        if (!isInferenceMode)
-        {
-            Debug.Log("[HexRL] 학습 모드 시작");
-            StartCoroutine(TrainingLoop());
-        }
+        LaunchMode(currentMode);
     }
 
-    private void OnDestroy()
+    void Update()
     {
-        worker?.Dispose();
+        if (Input.GetKeyDown(KeyCode.Alpha1)) speedMode = SpeedMode.Observe;
+        if (Input.GetKeyDown(KeyCode.Alpha2)) speedMode = SpeedMode.Normal;
+        if (Input.GetKeyDown(KeyCode.Alpha3)) speedMode = SpeedMode.Fast;
+        if (Input.GetKeyDown(KeyCode.Alpha4)) speedMode = SpeedMode.Turbo;
+        if (_prevSpeed != speedMode) { Time.timeScale = TScales[SI]; _prevSpeed = speedMode; }
+
+        if (Input.GetKeyDown(KeyCode.I) && currentMode == RLMode.Training)
+            SwitchToInference();
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 그리드 생성
-    // ═══════════════════════════════════════════════════════════════
-    private void BuildGrid()
+    void OnDestroy() { Time.timeScale = 1f; DisposeWorker(); }
+
+    void LaunchMode(RLMode mode)
+    {
+        _running = true; currentMode = mode;
+        if (mode == RLMode.Training) { Debug.Log("[HexRL] Training 모드"); StartCoroutine(TrainingLoop()); }
+        else SwitchToInference();
+    }
+
+    void SwitchToInference()
+    {
+        if (modelAsset == null) { Debug.LogWarning("[HexRL] modelAsset이 비어있습니다."); return; }
+        _running = false;
+        DisposeWorker();
+        _model = ModelLoader.Load(modelAsset);
+        _worker = new Worker(_model, BackendType.GPUCompute);
+        currentMode = RLMode.Inference;
+        _running = true;
+        Debug.Log("[HexRL] Inference 모드 전환 완료");
+
+        // ── 모델 입출력 정보 덤프 ──────────────────────────────────
+        Debug.Log("=== Model Input/Output Info ===");
+        foreach (var inp in _model.inputs)
+            Debug.Log($"  INPUT  name='{inp.name}'  shape={inp.shape}");
+        foreach (var outp in _model.outputs)
+            Debug.Log($"  OUTPUT name='{outp.name}'  shape={outp}");
+        Debug.Log("================================");
+
+        ResetEpisode();
+        StartCoroutine(InferenceLoop());
+    }
+
+    void DisposeWorker() { _worker?.Dispose(); _worker = null; _model = null; }
+
+    // ════════════════════════════════════════════════════════════════
+    // 그리드
+    // ════════════════════════════════════════════════════════════════
+    void BuildGrid()
     {
         allTiles.Clear();
         for (int r = -gridRadius; r <= gridRadius; r++)
             for (int c = -gridRadius; c <= gridRadius; c++)
             {
-                // 큐브 좌표로 변환 후 반지름 체크
-                int cx = c - (r - (r & 1)) / 2;
-                int cz = r;
-                int cy = -cx - cz;
+                int cx = c - (r - (r & 1)) / 2, cz = r, cy = -cx - cz;
                 if (Mathf.Abs(cx) <= gridRadius && Mathf.Abs(cy) <= gridRadius && Mathf.Abs(cz) <= gridRadius)
                 {
-                    var coord = new Vector2Int(c, r);
-                    allTiles.Add(coord);
-                    if (tilePrefab != null)
-                        Instantiate(tilePrefab, HexToWorld(coord), Quaternion.identity, transform);
+                    allTiles.Add(new Vector2Int(c, r));
+                    if (tilePrefab) Instantiate(tilePrefab, HexToWorld(new Vector2Int(c, r)) + tileOffset, Quaternion.identity, transform);
                 }
             }
-        Debug.Log($"[HexRL] 타일 수: {allTiles.Count}");
+        Debug.Log($"[HexRL] 타일: {allTiles.Count}");
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 에피소드 초기화 (동기식 전체 리셋)
-    // ═══════════════════════════════════════════════════════════════
-    private void ResetEpisode()
+    // ════════════════════════════════════════════════════════════════
+    // 에피소드 리셋
+    // ════════════════════════════════════════════════════════════════
+    void ResetEpisode()
     {
-        // 기존 에이전트 및 목표물 제거
-        foreach (var ag in agents) Destroy(ag.go);
+        foreach (var ag in agents)
+        {
+            if (ag.moveCoroutine != null) StopCoroutine(ag.moveCoroutine);
+            if (ag.go) Destroy(ag.go);
+        }
         agents.Clear();
-        if (goalObj != null) Destroy(goalObj);
+        if (goalObj) Destroy(goalObj);
 
-        // 목표 랜덤 배치
         goalHex = allTiles[UnityEngine.Random.Range(0, allTiles.Count)];
-        if (goalPrefab != null)
-            goalObj = Instantiate(goalPrefab, HexToWorld(goalHex), Quaternion.identity, transform);
+        if (goalPrefab) goalObj = Instantiate(goalPrefab, HexToWorld(goalHex), Quaternion.identity, transform);
 
-        // 에이전트 랜덤 배치 (목표와 겹치지 않게)
-        var usedTiles = new HashSet<Vector2Int> { goalHex };
+        var used = new HashSet<Vector2Int> { goalHex };
         for (int i = 0; i < agentCount; i++)
         {
-            Vector2Int spawn;
-            do { spawn = allTiles[UnityEngine.Random.Range(0, allTiles.Count)]; }
-            while (usedTiles.Contains(spawn));
-            usedTiles.Add(spawn);
-
+            Vector2Int sp;
+            do { sp = allTiles[UnityEngine.Random.Range(0, allTiles.Count)]; } while (used.Contains(sp));
+            used.Add(sp);
+            var wp = HexToWorld(sp);
             var ag = new HexAgent
             {
                 id = i,
-                hexCoord = spawn,
+                hexCoord = sp,
                 firstStep = true,
                 prevAction = -1,
-                prevDist = HexDistance(spawn, goalHex),
+                prevDist = HexDist(sp, goalHex),
+                worldFrom = wp,
+                worldTo = wp
             };
-
-            if (agentPrefab != null)
-                ag.go = Instantiate(agentPrefab, HexToWorld(spawn), Quaternion.identity, transform);
-
+            if (agentPrefab) ag.go = Instantiate(agentPrefab, wp, Quaternion.identity, transform);
             agents.Add(ag);
         }
-
         stepCount = 0;
-        episodeRunning = true;
+
+        if (debugLog)
+            Debug.Log($"[HexRL] ResetEpisode  goalHex={goalHex}");
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 학습 루프 (Python 서버와 동기 통신)
-    // ═══════════════════════════════════════════════════════════════
-    private IEnumerator TrainingLoop()
+    void RespawnSingleAgent(HexAgent ag)
+    {
+        if (ag.moveCoroutine != null) StopCoroutine(ag.moveCoroutine);
+        var used = new HashSet<Vector2Int> { goalHex };
+        foreach (var a in agents) if (a != ag) used.Add(a.hexCoord);
+        Vector2Int sp;
+        do { sp = allTiles[UnityEngine.Random.Range(0, allTiles.Count)]; } while (used.Contains(sp));
+        ag.hexCoord = sp; ag.firstStep = true; ag.prevAction = -1;
+        ag.prevDist = HexDist(sp, goalHex);
+        var wp = HexToWorld(sp); ag.worldFrom = wp; ag.worldTo = wp;
+        if (ag.go) ag.go.transform.position = wp;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // 이동
+    // ════════════════════════════════════════════════════════════════
+    void MoveAgent(HexAgent ag, Vector2Int next)
+    {
+        ag.hexCoord = next;
+        var dest = HexToWorld(next);
+        if (!ag.go) return;
+        float dur = LerpDur[SI];
+        if (dur > 0f)
+        {
+            if (ag.moveCoroutine != null) StopCoroutine(ag.moveCoroutine);
+            ag.worldFrom = ag.go.transform.position; ag.worldTo = dest;
+            ag.moveCoroutine = StartCoroutine(LerpMove(ag, dur));
+        }
+        else ag.go.transform.position = dest;
+    }
+
+    IEnumerator LerpMove(HexAgent ag, float dur)
+    {
+        float t = 0; var from = ag.worldFrom; var to = ag.worldTo;
+        while (t < dur)
+        {
+            if (!ag.go) yield break;
+            t += Time.deltaTime;
+            ag.go.transform.position = Vector3.Lerp(from, to, Mathf.SmoothStep(0, 1, t / dur));
+            yield return null;
+        }
+        if (ag.go) ag.go.transform.position = to;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // 학습 루프
+    // ════════════════════════════════════════════════════════════════
+    IEnumerator TrainingLoop()
     {
         ResetEpisode();
-
-        while (true)
+        while (_running)
         {
-            // ── 1. 요청 패킷 구성 ──────────────────────────────
-            var req = new StepRequest { agents = new List<AgentStepData>() };
+            bool isEpisodeEnd = (stepCount + 1 >= maxSteps);
+            var req = new StepRequest { agents = new List<AgentStepData>(), is_episode_end = isEpisodeEnd };
 
             foreach (var ag in agents)
             {
-                float curDist = HexDistance(ag.hexCoord, goalHex);
-                float[] state = BuildState(ag);
+                float cd = HexDist(ag.hexCoord, goalHex);
+                var st = BuildState(ag, cd);
+                bool arrived = Vector2.Distance((Vector2)ag.hexCoord, (Vector2)goalHex) <= 2.5f;//ag.hexCoord == goalHex;
 
-                var data = new AgentStepData
+                var d = new AgentStepData
                 {
                     id = ag.id,
-                    state = state,
-                    reward = ag.firstStep ? 0f : CalcReward(ag, curDist),
-                    done = ag.firstStep ? false : (ag.hexCoord == goalHex),
+                    state = st,
+                    reward = ag.firstStep ? 0f : Reward(ag, cd),
+                    done = arrived
                 };
+                if (!ag.firstStep) { d.prev_state = ag.prevState; d.prev_action = ag.prevAction; }
+                req.agents.Add(d);
 
-                if (!ag.firstStep)
-                {
-                    data.prev_state = ag.prevState;
-                    data.prev_action = ag.prevAction;
-                }
-
-                req.agents.Add(data);
-                ag.prevState = state;
-                ag.prevDist = curDist;
+                ag.prevState = st;
+                ag.prevDist = cd;
                 ag.firstStep = false;
+
+                if (arrived) RespawnSingleAgent(ag);
             }
 
-            // ── 2. HTTP POST /step ──────────────────────────────
-            string json = JsonConvert.SerializeObject(req);
-            using var www = new UnityWebRequest(serverUrl + "/step", "POST");
-            www.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(json));
-            www.downloadHandler = new DownloadHandlerBuffer();
-            www.SetRequestHeader("Content-Type", "application/json");
+            using var www = Post(serverUrl + "/step", JsonConvert.SerializeObject(req));
             yield return www.SendWebRequest();
-
+            if (!_running) yield break;
             if (www.result != UnityWebRequest.Result.Success)
-            {
-                Debug.LogError($"[HexRL] 서버 통신 오류: {www.error}");
-                yield return new WaitForSeconds(1f);
-                continue;
-            }
+            { Debug.LogError($"[HexRL] {www.error}"); yield return new WaitForSeconds(1f); continue; }
 
-            // ── 3. 응답 파싱 후 행동 적용 ───────────────────────
             var resp = JsonConvert.DeserializeObject<StepResponse>(www.downloadHandler.text);
             if (resp?.actions == null) { yield return null; continue; }
-
-            bool episodeDone = false;
 
             foreach (var ag in agents)
             {
                 if (!resp.actions.TryGetValue(ag.id.ToString(), out int act)) continue;
-
                 ag.prevAction = act;
-                Vector2Int next = HexNeighbor(ag.hexCoord, act);
+                var next = Neighbor(ag.hexCoord, act);
 
-                if (allTiles.Contains(next))   // 그리드 범위 내 이동만 허용
-                {
-                    ag.hexCoord = next;
-                    if (ag.go != null)
-                        ag.go.transform.position = HexToWorld(next);
-                }
-
-                if (ag.hexCoord == goalHex) episodeDone = true;
+                ag.prevHexCoord = ag.hexCoord; // ★ 이동 직전에 현재 위치를 무조건 저장!
+                if (allTiles.Contains(next)) MoveAgent(ag, next);
             }
 
-            stepCount++;
-            if (stepCount >= maxSteps) episodeDone = true;
-
-            // ── 4. 에피소드 종료 시 전체 리셋 ───────────────────
-            if (episodeDone)
+            if (++stepCount >= maxSteps)
             {
-                Debug.Log($"[HexRL] 에피소드 종료 (스텝:{stepCount}) | ε={resp.epsilon:F3} loss={resp.loss}");
+                Debug.Log($"[HexRL] ep끝 step:{stepCount} ε={resp.epsilon:F3} loss={resp.loss}");
                 ResetEpisode();
             }
 
-            yield return null;  // 1프레임 대기 후 다음 스텝
+            float delay = Delay[SI];
+            if (delay > 0) yield return new WaitForSeconds(delay); else yield return null;
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 추론 루프 (Sentis ONNX, 서버 불필요)
-    // ═══════════════════════════════════════════════════════════════
-    private IEnumerator InferenceLoop()
+    // ════════════════════════════════════════════════════════════════
+    // 추론 루프
+    // ════════════════════════════════════════════════════════════════
+    IEnumerator InferenceLoop()
     {
-        ResetEpisode();
-
-        while (true)
+        int logStep = 0;
+        while (_running)
         {
-            foreach (var ag in agents)
+            var snapshot = new float[agents.Count][];
+            for (int i = 0; i < agents.Count; i++)
             {
-                float[] state = BuildState(ag);
-                int act = InferAction(state);
+                var ag = agents[i];
+                float cd = HexDist(ag.hexCoord, goalHex);
+                snapshot[i] = BuildState(ag, cd);
 
-                Vector2Int next = HexNeighbor(ag.hexCoord, act);
-                if (allTiles.Contains(next))
-                {
-                    ag.hexCoord = next;
-                    if (ag.go != null)
-                        ag.go.transform.position = HexToWorld(next);
-                }
+                // ★ [버그 수정] 상태 빌드 직후에 prevDist를 업뎃해야 다음 턴 delta가 살아나!
+                ag.prevDist = cd;
             }
 
-            stepCount++;
-            bool done = agents.Exists(a => a.hexCoord == goalHex) || stepCount >= maxSteps;
-            if (done) ResetEpisode();
+            bool done = false;
+            for (int i = 0; i < agents.Count; i++)
+            {
+                var ag = agents[i];
+                int act = Infer(snapshot[i], ag.id, logStep);
+                ag.prevAction = act;
+                var next = Neighbor(ag.hexCoord, act);
 
-            yield return new WaitForSeconds(inferenceTickSec);
+                ag.prevHexCoord = ag.hexCoord; // ★ 추론 모드에서도 동일하게 직전 위치 추적
+                if (allTiles.Contains(next)) MoveAgent(ag, next);
+
+                if (ag.hexCoord == goalHex) done = true;
+            }
+
+            logStep++;
+
+            if (++stepCount >= maxSteps || done)
+            {
+                Debug.Log($"[HexRL-Inf] 에피소드 종료  step={stepCount}  done={done}");
+                ResetEpisode();
+                logStep = 0;
+            }
+
+            // (기존 루프 맨 아래에 있던 ag.prevDist = HexDist(...) 코드는 완전히 삭제해야 해)
+            float delay = Delay[SI];
+            if (delay > 0) yield return new WaitForSeconds(delay); else yield return null;
         }
     }
 
-    private int InferAction(float[] state)
+    // ════════════════════════════════════════════════════════════════
+    // Infer  — 상세 로그 포함
+    // ════════════════════════════════════════════════════════════════
+    int Infer(float[] state, int agentId, int step)
     {
-        using var tensor = new Tensor<float>(new TensorShape(1, state.Length), state);
-        worker.Schedule(tensor);
-        using var output = worker.PeekOutput("q_values") as Tensor<float>;
-        output.DownloadToArray();
+        if (_worker == null) return UnityEngine.Random.Range(0, 6);
+
+        using var inputTensor = new Tensor<float>(new TensorShape(1, state.Length), state);
+        _worker.SetInput("state", inputTensor);
+        _worker.Schedule();
+
+        var ot = _worker.PeekOutput("q_values") as Tensor<float>;
+        if (ot == null)
+        {
+            Debug.LogError($"[Infer] PeekOutput('q_values') == null  agent={agentId}");
+            return UnityEngine.Random.Range(0, 6);
+        }
+
+        using var result = ot.ReadbackAndClone();
+
+        // Q값 전체 읽기
+        float[] qVals = new float[6];
+        for (int i = 0; i < 6; i++) qVals[i] = result[0, i];
 
         int best = 0;
-        float bestQ = float.MinValue;
+        float bq = float.MinValue;
         for (int i = 0; i < 6; i++)
-            if (output[0, i] > bestQ) { bestQ = output[0, i]; best = i; }
+            if (qVals[i] > bq) { bq = qVals[i]; best = i; }
+
+        // ── 로그: 첫 5스텝 + 이후 10스텝마다, 지정 에이전트만 ──────
+        if (debugLog && agentId == debugAgentId && (step < 5 || step % 10 == 0))
+        {
+            Debug.Log(
+                $"[Infer] step={step}  agent={agentId}\n" +
+                $"  state : dir_x={state[0]:F3}  dir_z={state[1]:F3}  delta={state[2]:F3}\n" +
+                $"  Q     : [{string.Join(", ", System.Array.ConvertAll(qVals, v => v.ToString("F3")))}]\n" +
+                $"  action: {best}  (Q={bq:F3})"
+            );
+        }
+
         return best;
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 상태 구성: [dir_x, dir_z, delta_dist]
-    // ═══════════════════════════════════════════════════════════════
-    private float[] BuildState(HexAgent ag)
+    // ════════════════════════════════════════════════════════════════
+    // 헬퍼
+    // ════════════════════════════════════════════════════════════════
+    float[] BuildState(HexAgent ag, float currentDist)
     {
-        Vector3 agPos = HexToWorld(ag.hexCoord);
-        Vector3 goalPos = HexToWorld(goalHex);
-        Vector3 diff = goalPos - agPos;
-
-        float curDist = diff.magnitude;
-        float deltaDist = ag.prevDist - curDist;  // 양수 = 목표에 가까워짐
-
-        Vector3 dir = diff.magnitude > 1e-4f ? diff.normalized : Vector3.zero;
-
-        return new float[] { dir.x, dir.z, deltaDist };
+        var diff = HexToWorld(goalHex) - HexToWorld(ag.hexCoord);
+        var dir = currentDist > 0 ? diff.normalized : Vector3.zero;
+        float delta = ag.prevDist - currentDist;
+        return new[] { dir.x, dir.z, delta };
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 보상 함수
-    // ═══════════════════════════════════════════════════════════════
-    private float CalcReward(HexAgent ag, float curDist)
+    float Reward(HexAgent ag, float cd)
     {
-        if (ag.hexCoord == goalHex) return 1.0f;    // 도달 성공
-        float delta = ag.prevDist - curDist;
-        return Mathf.Clamp(delta * 0.1f, -0.5f, 0.5f); // 거리 변화 쉐이핑
+        if (ag.hexCoord == goalHex) return 1f;
+
+        // 만약 움직이지 않고 제자리에 멈췄거나 벽을 들이받았다면 페널티
+        if (ag.hexCoord == ag.prevHexCoord) return -0.1f;
+
+        // 1. 내가 실제로 움직인 방향 벡터 (World Space)
+        Vector3 moveDir = (HexToWorld(ag.hexCoord) - HexToWorld(ag.prevHexCoord)).normalized;
+        // 2. 출발지점에서 목적지를 향하는 올바른 방향 벡터
+        Vector3 goalDir = (HexToWorld(goalHex) - HexToWorld(ag.prevHexCoord)).normalized;
+
+        // 3. 두 벡터의 내적 (똑바로 가면 1.0, 90도 옆길은 0.0, 역주행은 -1.0)
+        float dot = Vector3.Dot(moveDir, goalDir);
+
+        // 거리 변화량(distDelta)과 방향 일치도(dotReward)를 적절히 융합
+        float distDelta = (ag.prevDist - cd) * 0.1f;
+        float dotReward = dot * 0.05f;
+
+        return Mathf.Clamp(distDelta + dotReward, -0.5f, 0.5f);
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 육각 거리 (offset → cube 변환 후 계산)
-    // ═══════════════════════════════════════════════════════════════
-    private float HexDistance(Vector2Int a, Vector2Int b)
+    Vector2Int Neighbor(Vector2Int h, int dir)
     {
-        // odd-r offset → cube
-        int ac = a.x - (a.y - (a.y & 1)) / 2;
-        int bc = b.x - (b.y - (b.y & 1)) / 2;
-        int da = ac - bc;
-        int db = a.y - b.y;
-        int dc = -da - db;
+        bool odd = (h.y & 1) == 1;
+        var d = odd ? new[]{ new Vector2Int(1,1),new Vector2Int(1,0),new Vector2Int(1,-1),
+                              new Vector2Int(0,-1),new Vector2Int(-1,0),new Vector2Int(0,1) }
+                    : new[]{ new Vector2Int(0,1),new Vector2Int(1,0),new Vector2Int(0,-1),
+                              new Vector2Int(-1,-1),new Vector2Int(-1,0),new Vector2Int(-1,1) };
+        return h + d[dir];
+    }
+
+    Vector3 HexToWorld(Vector2Int h)
+        => new(hexSize * (h.x + 0.5f * (h.y & 1)), 0f, hexSize * h.y * (Mathf.Sqrt(3f) / 2f));
+
+    float HexDist(Vector2Int a, Vector2Int b)
+    {
+        int ac = a.x - (a.y - (a.y & 1)) / 2, bc = b.x - (b.y - (b.y & 1)) / 2;
+        int da = ac - bc, db = a.y - b.y, dc = -da - db;
         return (Mathf.Abs(da) + Mathf.Abs(db) + Mathf.Abs(dc)) / 2f;
+    }
+
+    static UnityWebRequest Post(string url, string json)
+    {
+        var w = new UnityWebRequest(url, "POST");
+        w.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(json));
+        w.downloadHandler = new DownloadHandlerBuffer();
+        w.SetRequestHeader("Content-Type", "application/json");
+        return w;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // HUD
+    // ════════════════════════════════════════════════════════════════
+    void OnGUI()
+    {
+        var n = new GUIStyle(GUI.skin.label) { fontSize = 12 };
+        var b = new GUIStyle(n) { fontStyle = FontStyle.Bold };
+        b.normal.textColor = Color.yellow;
+
+        float hw = 220f, hh = 102f, hx = Screen.width - hw - 10f, hy = 10f;
+        GUI.Box(new Rect(hx, hy, hw, hh), "");
+        GUI.Label(new Rect(hx + 8, hy + 4, hw, 18), "Speed  [1~4]", n);
+        string[] sl ={"[1] Observe  0.4s lerp ON","[2] Normal   0.1s lerp ON",
+                     "[3] Fast     frame lerp OFF","[4] Turbo  4×time lerp OFF"};
+        for (int i = 0; i < 4; i++)
+        {
+            bool cur = SI == i;
+            GUI.Label(new Rect(hx + 8, hy + 24 + i * 18, hw - 8, 18), (cur ? "▶ " : "   ") + sl[i], cur ? b : n);
+        }
+
+        float pw = 240f, ph = 52f, px = Screen.width - pw - 10f, py = Screen.height - ph - 10f;
+        GUI.Box(new Rect(px, py, pw, ph), "");
+        string ml = currentMode == RLMode.Training ? "🔵 Training" : "🟢 Inference (InferenceEngine)";
+        GUI.Label(new Rect(px + 8, py + 6, pw, 18), ml, b);
+        string hint = currentMode == RLMode.Training
+            ? "서버 E → .onnx 저장  |  I 키 → 추론 전환"
+            : "로컬 추론 실행 중";
+        GUI.Label(new Rect(px + 8, py + 26, pw, 18), hint, n);
     }
 }
