@@ -5,13 +5,6 @@ using UnityEngine;
 
 namespace RL_StepByStep
 {
-    /// <summary>
-    /// 추론 모드. Python 학습이 끝난 ONNX 모델을 Unity Inference Engine으로 로컬에서 실행한다.
-    /// 네트워크 왕복이 없어 지연이 거의 없고, 빌드에도 그대로 포함 가능.
-    ///
-    /// TObs -> float[] 변환과 float[] -> TAction 변환은 프로젝트마다 다르므로
-    /// 델리게이트로 주입받는다 (Phase가 바뀌어도 이 클래스는 수정하지 않음).
-    /// </summary>
     public class LocalInferencePolicyProvider<TObs, TAction> : IPolicyProvider<TObs, TAction>, IDisposable
         where TObs : struct
         where TAction : struct
@@ -25,11 +18,10 @@ namespace RL_StepByStep
 
         private readonly List<int> pendingIds = new List<int>();
         private readonly List<float[]> pendingInputs = new List<float[]>();
+        
+        // 중복 플러시 방지용 락 플래그
+        private bool isFlushing = false;
 
-        /// <param name="modelAsset">StreamingAssets 등에서 로드한 ModelAsset</param>
-        /// <param name="backend">CPU 또는 GPUCompute</param>
-        /// <param name="obsToInput">관측 구조체 -> 신경망 입력 float 배열 변환</param>
-        /// <param name="outputToAction">신경망 출력 float 배열 -> 액션 구조체 변환</param>
         public LocalInferencePolicyProvider(
             ModelAsset modelAsset,
             BackendType backend,
@@ -50,39 +42,57 @@ namespace RL_StepByStep
 
         public async void Flush()
         {
-            if (pendingIds.Count == 0) return;
+            // 아직 이전 플러시가 비동기 대기 중이거나 데이터가 없으면 패스
+            if (pendingIds.Count == 0 || isFlushing) return;
+
+            isFlushing = true;
 
             int count = pendingIds.Count;
             int inputDim = pendingInputs[0].Length;
 
-            // 배치 입력 텐서 구성 (count, inputDim)
             float[] flat = new float[count * inputDim];
             for (int i = 0; i < count; i++)
             {
                 Array.Copy(pendingInputs[i], 0, flat, i * inputDim, inputDim);
             }
 
-            using var inputTensor = new Tensor<float>(new TensorShape(count, inputDim), flat);
-
-            worker.Schedule(inputTensor);
-            using var outputTensor = worker.PeekOutput() as Tensor<float>;
-
-            // GPU 백엔드일 경우 비동기 readback 필요
-            using var cpuTensor = await outputTensor.ReadbackAndCloneAsync() as Tensor<float>;
-            float[] outputFlat = cpuTensor.DownloadToArray();
-
-            int outputDim = outputFlat.Length / count;
-            for (int i = 0; i < count; i++)
-            {
-                float[] singleOutput = new float[outputDim];
-                Array.Copy(outputFlat, i * outputDim, singleOutput, 0, outputDim);
-
-                TAction action = outputToAction(singleOutput);
-                OnAction?.Invoke(pendingIds[i], action);
-            }
-
+            // [수정 포인트 1] await 호출 전에 원본 리스트를 로컬로 복사하고 즉시 비운다.
+            // 그래야 다음 프레임에서 Submit된 데이터와 섞이거나 중복 처리되지 않아.
+            var currentIds = new List<int>(pendingIds);
             pendingIds.Clear();
             pendingInputs.Clear();
+
+            try
+            {
+                using var inputTensor = new Tensor<float>(new TensorShape(count, inputDim), flat);
+                worker.Schedule(inputTensor);
+
+                // [수정 포인트 2] PeekOutput은 using을 쓰지 않는다. (소유권은 Worker에게 있음)
+                var outputTensor = worker.PeekOutput() as Tensor<float>;
+                if (outputTensor == null) return;
+
+                // ReadbackAndCloneAsync가 뱉는 텐서는 새로 할당된 클론이므로 using이 필수야.
+                using var cpuTensor = await outputTensor.ReadbackAndCloneAsync();
+                float[] outputFlat = cpuTensor.DownloadToArray();
+
+                int outputDim = outputFlat.Length / count;
+                for (int i = 0; i < count; i++)
+                {
+                    float[] singleOutput = new float[outputDim];
+                    Array.Copy(outputFlat, i * outputDim, singleOutput, 0, outputDim);
+
+                    TAction action = outputToAction(singleOutput);
+                    OnAction?.Invoke(currentIds[i], action);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"추론 중 에러 발생: {e.Message}");
+            }
+            finally
+            {
+                isFlushing = false;
+            }
         }
 
         public void Dispose()

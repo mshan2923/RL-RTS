@@ -17,7 +17,7 @@ namespace RL_StepByStep
     ///   송신: [count:int32][TObs * count]
     ///   수신: [count:int32][(unitId:int32, TAction) * count]
     /// </summary>
-    public class CommsManager<TObs, TAction> : MonoBehaviour, ICommsManager
+    public class CommsManager<TObs, TAction> : MonoBehaviour, ICommsManager, IDisposable
         where TObs : struct
         where TAction : struct
     {
@@ -44,7 +44,13 @@ namespace RL_StepByStep
 
         public bool IsConnected => client != null && client.Connected;
 
-        protected virtual void Awake()
+        public void setup(string host = "127.0.0.1", int port = 5555)
+        {
+            this.host = host;
+            this.port = port;
+        }
+
+        public virtual void Awake()
         {
             if (_instance != null && _instance != this)
             {
@@ -182,5 +188,12 @@ namespace RL_StepByStep
             stream?.Close();
             client?.Close();
         }
+
+        public void Dispose()
+        {
+            stream?.Close();
+            client?.Close();
+        }
+
     }
 }

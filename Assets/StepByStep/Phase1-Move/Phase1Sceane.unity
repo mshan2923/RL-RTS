@@ -771,7 +771,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cb94faaa83e0b0244947816884892209, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RL_StepByStep.Phase1StepManager
-  runMode: 0
+  runMode: 1
   stepInterval: 0.01
   commsManagerBehaviour: {fileID: 1723030197}
   onnxModel: {fileID: 5022602860645237092, guid: c85a3edd1a0997340a62f358c404e1c5, type: 3}

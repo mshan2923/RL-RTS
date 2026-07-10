@@ -1,12 +1,15 @@
 using System;
+using Unity.InferenceEngine;
+using UnityEngine;
 
 namespace RL_StepByStep
 {
         public class PureMoveStepManager : GameStepManagerBase<PureMoveUnit, PureMoveObservation, PureMoveAction>
     {
+
         public static PureMoveStepManager Instance { get; private set; }
 
-        protected override void Awake()
+        public override void Awake()
         {
             if (Instance == null) Instance = this;
             else { Destroy(gameObject); return; }

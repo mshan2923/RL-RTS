@@ -26,6 +26,7 @@ namespace RL_StepByStep
     {
         [SerializeField] protected RunMode runMode = RunMode.Training;
         [SerializeField] protected float stepInterval = 0.2f;
+        public float Interval {get => stepInterval;}
 
         [Header("Training Mode")]
         [Tooltip("CommsManager<TObs,TAction>를 구현한 컴포넌트를 드래그. "
@@ -47,7 +48,16 @@ namespace RL_StepByStep
         protected abstract System.Func<TObs, float[]> ObsToInput { get; }
         protected abstract System.Func<float[], TAction> OutputToAction { get; }
 
-        protected virtual void Awake()
+        public void setup(RunMode runMode , float stepInterval,MonoBehaviour mono, ModelAsset onnxModel, BackendType inferenceBackend)
+        {
+            this.runMode = runMode;
+            this.stepInterval = stepInterval;
+            commsManagerBehaviour = mono;
+            this.onnxModel = onnxModel;
+            this.inferenceBackend = inferenceBackend;
+        }
+
+        public virtual void Awake()
         {
             try
             {
