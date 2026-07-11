@@ -18,7 +18,7 @@ namespace RL_StepByStep
 
         protected override Func<Phase2Observation, float[]> ObsToInput => Phase2Converters.ObsToInput;
 
-        //LocalInferencePolicyProvider 에서 InferencEngine 동작
+        //LocalInferencePolicyProvider 에서 InferencEngine 동작 , 
         protected override Func<float[], Phase2Action> OutputToAction => Phase2Converters.OutputToAction;
     }
 }
