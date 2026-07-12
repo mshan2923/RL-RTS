@@ -30,7 +30,6 @@ namespace RL_StepByStep
         private bool hasStarted;
 
         public bool isResetTargetPos;
-        public float Speed = 1f;
 
         void Awake()
         {
@@ -135,7 +134,7 @@ namespace RL_StepByStep
         public void SyncTransform()
         {
             // Vector2 world = HexUtil.AxialToWorld(axialPosition);
-            transform.position += Mathf.Max(Phase2StepManager.Instance.Interval, Time.deltaTime) * Speed * direction;
+            transform.position += Mathf.Max(Phase2StepManager.Instance.Interval, Time.deltaTime) * Phase2StepManager.Instance.Speed * direction;
         }
     }
 }

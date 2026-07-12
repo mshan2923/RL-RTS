@@ -19,7 +19,7 @@ namespace RL_StepByStep
             // Speed * Mathf.Max(Interval, Time.deltaTime)를 쓴다. Interval이 프레임 deltaTime보다
             // 크면(보통 그렇다 - 스텝 간격을 일부러 늘려두니까) 임계값이 실제 이동량보다 작게 잡혀서
             // 여전히 목표를 지나쳐버렸다. 반드시 같은 공식을 써야 한다.
-            float stepMoveDist = self.Speed * Mathf.Max(Phase2StepManager.Instance.Interval, Time.deltaTime);
+            float stepMoveDist = Phase2StepManager.Instance.Speed * Mathf.Max(Phase2StepManager.Instance.Interval, Time.deltaTime);
             return Mathf.Max(MinTargetReachedDistance, stepMoveDist * 1.5f);
         }
 

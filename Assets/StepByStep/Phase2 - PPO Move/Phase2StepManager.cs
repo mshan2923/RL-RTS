@@ -8,6 +8,7 @@ namespace RL_StepByStep
     {
 
         public static Phase2StepManager Instance { get; private set; }
+        public float Speed;
 
         public override void Awake()
         {
