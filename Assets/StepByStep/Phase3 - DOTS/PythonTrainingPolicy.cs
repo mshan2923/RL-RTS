@@ -37,7 +37,7 @@ namespace RL_StepByStep
             int count = obsArray.Length;
             if (count == 0) return;
 
-            // 1. 송신 데이터 준비 (메모리 카피는 빠르게 메인에서 처리)
+            // 1. 송신 데이터 준비
             int payloadSize = count * obsSize;
             int totalSendSize = 4 + payloadSize; 
 
@@ -56,10 +56,10 @@ namespace RL_StepByStep
                 }
             }
 
-            // 비동기 데이터 송신 (스레드 블로킹 없음)
+            // 비동기 데이터 송신
             await SendAllAsync(sendBuffer, totalSendSize);
 
-            // 2. 비동기 헤더 수신 (4바이트 개수 파싱)
+            // 2. 비동기 헤더 수신
             byte[] headerBuffer = new byte[4];
             await ReceiveAllAsync(headerBuffer, 4);
             int countOut = BitConverter.ToInt32(headerBuffer, 0);
@@ -71,25 +71,25 @@ namespace RL_StepByStep
 
             await ReceiveAllAsync(receiveBuffer, targetReceiveSize);
 
-            // 4. 수신 완료 후 NativeArray에 메모리 다이렉트 주입
-            // (await 이후 유니티 메인 스레드 컨텍스트로 복귀하므로 NativeArray 접근 안전함)
+            // 4. 수신 완료 후 NativeArray에 메모리 다이렉트 주입 (수정된 포인트)
             unsafe
             {
                 byte* actionBasePtr = (byte*)actionArray.GetUnsafePtr();
                 fixed (byte* resBufferPtr = receiveBuffer)
                 {
+                    // 파이썬에서 보낸 순서 그대로 들어오므로, countOut 만큼 순절적으로 매핑해
                     for (int i = 0; i < countOut; i++)
                     {
+                        if (i >= actionArray.Length) break; // 안전장치
+
                         int offset = i * packetPerAgentSize;
-                        int responseUnitId = *(int*)(resBufferPtr + offset);
                         
-                        if (responseUnitId >= 0 && responseUnitId < actionArray.Length)
-                        {
-                            byte* targetActionPtr = actionBasePtr + (responseUnitId * actionSize);
-                            byte* sourceActionPtr = resBufferPtr + offset + 4;
-                            
-                            UnsafeUtility.MemCpy(targetActionPtr, sourceActionPtr, actionSize);
-                        }
+                        // 팁: 정적 ID 검증이 꼭 필요한 구조가 아니라면 responseUnitId를 인덱스로 쓰지 않아
+                        // 원래 순서대로 actionArray의 i번째 칸에 메모리를 다이렉트 복사해 
+                        byte* targetActionPtr = actionBasePtr + (i * actionSize);
+                        byte* sourceActionPtr = resBufferPtr + offset + 4; // ID(4바이트) 건너뛰고 Action 데이터 포인터
+                        
+                        UnsafeUtility.MemCpy(targetActionPtr, sourceActionPtr, actionSize);
                     }
                 }
             }

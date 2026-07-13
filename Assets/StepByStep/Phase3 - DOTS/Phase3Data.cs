@@ -8,11 +8,11 @@ namespace RL_StepByStep
     [StructLayout(LayoutKind.Sequential)]
     public struct Phase3Observation : IComponentData
     {
-        public int unitId;
+        public float unitId;
         public float dx; // 목표까지 상대 x (정규화)
         public float dy; // 목표까지 상대 y (정규화)
         public float reward;
-        public int done;
+        public float done;
     }
 
     /// <summary>0~5: 6방향 중 하나로 즉시 이동 (절대 axial 방향, facing 없음)</summary>

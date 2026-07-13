@@ -1,59 +1,49 @@
 import torch
+import torch.nn as nn
 from stable_baselines3 import PPO
+from stable_baselines3.common.torch_layers import MlpExtractor
 
-# 1. 저장된 zip 모델 로드
-model = PPO.load("phase3_ppo_model")
-
-# 저장된 모델에서 에이전트 수(num_agents) 자동 추출
-# 예: observation_space.shape가 (10, 2)라면 num_agents는 10
-obs_shape = model.observation_space.shape
-num_agents = obs_shape[0]  
-feature_dim = obs_shape[1] # 2 (dx, dy)
-
-print(f"모델 로드 완료! 감지된 에이전트 수: {num_agents}개, 특징 수: {feature_dim}개")
-
-
-# 2. ONNX 익스포트용 래퍼 클래스 (유니티 데이터 규격 매핑)
-class PolicyWrapper(torch.nn.Module):
-    def __init__(self, sb3_model, agents_count):
+# 정책 네트워크를 ONNX로 수출하기 위한 래퍼 클래스
+class ActorWrapper(nn.Module):
+    def __init__(self, policy):
         super().__init__()
-        self.policy = sb3_model.policy
-        self.num_agents = agents_count
+        self.policy = policy
 
     def forward(self, obs):
-        # 1. 유니티 센티스에서 입력된 [Batch, NumAgents, 2] 구조를
-        #    SB3 FlatExtractor가 처리할 수 있게 [Batch, NumAgents * 2]로 평탄화
-        flat_obs = obs.view(obs.size(0), -1)
-        
-        # 2. 핵심 정책 신경망 통과 (결정론적 액션 평균값 추출)
-        features = self.policy.extract_features(flat_obs)
+        # SB3의 policy는 predict 시 다양한 로직이 섞여 있으니
+        # 가장 기초적인 '추론'만 담당하는 MLP 통과 로직을 타야 해
+        # features_extractor(obs) -> mlp_extractor -> action_net
+        features = self.policy.features_extractor(obs)
         latent_pi, _ = self.policy.mlp_extractor(features)
-        mean_actions = self.policy.action_net(latent_pi)
-        
-        # 3. 유니티 C# 단에서 NativeArray로 다시 쪼개기 편하게 
-        #    최종 출력을 원래의 3차원 배치 모양 [Batch, NumAgents, 2]로 복원해서 리턴
-        return mean_actions.view(-1, self.num_agents, 2)
+        action_logits = self.policy.action_net(latent_pi)
+        return action_logits
 
+def export_ppo_to_onnx(model_path, output_path):
+    model = PPO.load(model_path)
+    
+    # 래퍼 적용
+    actor_net = ActorWrapper(model.policy)
+    actor_net.eval()
+    
+    dummy_input = torch.randn(1, 2, dtype=torch.float32)
+    
+    torch.onnx.export(
+        actor_net,
+        dummy_input,
+        output_path,
+        export_params=True,
+        opset_version=14,
+        input_names=['input_obs'],
+        output_names=['output_action'],
+        dynamic_axes={'input_obs': {0: 'batch_size'}, 'output_action': {0: 'batch_size'}}
+    )
+    
+    print(f"[Export] 변환 성공: {output_path}")
+    print(f"[Export] 입력 차원: {dummy_input.shape}")
 
-wrapper = PolicyWrapper(model, num_agents)
-wrapper.eval()
-
-# 3. 유니티 센티스 입력 형태 정의 [Batch=1, NumAgents, Features=2]
-dummy_input = torch.zeros((1, num_agents, feature_dim), dtype=torch.float32)
-
-# 4. ONNX 변환 및 저장 (유니티 Sentis 표준 규격에 맞춤)
-torch.onnx.export(
-    wrapper, 
-    (dummy_input,), 
-    "Phase3_Policy.onnx",
-    input_names=["observation"], 
-    output_names=["action"],
-    dynamic_axes={
-        "observation": {0: "batch"}, 
-        "action": {0: "batch"}
-    },
-    export_params=True, 
-    opset_version=13, # Sentis와 호환성이 좋은 높은 opset 유지
-)
-
-print(f"Phase3_Policy.onnx 파일 생성 완료! (출력 텐서 구조: [Batch, {num_agents}, 2])")
+if __name__ == "__main__":
+    # 저장했던 모델 이름에 맞춰서 경로를 넣어줘
+    MODEL_FILE = "phase3_ppo_model.zip"
+    ONNX_FILE = "AgentActor.onnx"
+    
+    export_ppo_to_onnx(MODEL_FILE, ONNX_FILE)
