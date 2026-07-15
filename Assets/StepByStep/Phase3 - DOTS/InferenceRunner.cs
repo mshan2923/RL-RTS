@@ -206,6 +206,9 @@ public class InferenceRunner : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// 가장 큰 값이 '어느 위치(Index)에 있는지 / 점수를 받고 해당 인덱스를 리턴
+    /// </summary>
     NativeArray<int> ExtractArgMax(NativeArray<float> output, int n)
     {
         var result = new NativeArray<int>(n, Allocator.TempJob);

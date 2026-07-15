@@ -13,17 +13,21 @@ public class SentisVisualizer : MonoBehaviour
     public Transform[] agentTransforms; // 테스트할 큐브들
     
     private InferenceRunner _runner;
+    public InferenceRunnerTest runnerTest;
     private int _nAgents;
     [Header("Reset Settings")]
     public float arrivalThreshold = 0.5f; // 이 거리 안에 들어오면 도착으로 간주
     public float spawnRange = 10f;        // 랜덤 위치 생성 범위 (-10 ~ 10)
     public float Speed = 10;
+    public float MapSize = 10f;
 
     void Start()
     {
         _nAgents = agentTransforms.Length;
         // input: dx, dy (2개), output: dx, dy (2개)
-        _runner = new InferenceRunner(modelAsset, inputDim: 2, outputDim: 2);
+        // _runner = new InferenceRunner(modelAsset, inputDim: 2, outputDim: 2);
+
+        _runner = new InferenceRunner(runnerTest.modelAsset, runnerTest.inputDim, runnerTest.outputDim);
     }
 
 
@@ -50,8 +54,8 @@ public class SentisVisualizer : MonoBehaviour
             // 2. 관측값 계산 (새 위치가 반영됨)
             var pos = Target.position - agentTransforms[i].position;
 
-            obsInput[i * 2 + 0] = pos.x / 10f; 
-            obsInput[i * 2 + 1] = pos.z / 10f;
+            obsInput[i * 2 + 0] = pos.x / MapSize; 
+            obsInput[i * 2 + 1] = pos.z / MapSize;
         }
 
         // 3. 추론 (기존과 동일)
@@ -62,9 +66,6 @@ public class SentisVisualizer : MonoBehaviour
         {
             float ax = actions[i * 2 + 0];
             float ay = actions[i * 2 + 1];
-
-            // ax, ay가 0 근처에서만 노는지, 아니면 값이 나오는지 확인!
-            if(i == 0) Debug.Log($"Model Output: ax={ax:F2}, ay={ay:F2}"); 
 
             // 이동 적용 (Time.deltaTime 추가해서 부드럽게)
             Vector3 move = new Vector3(ax, 0, ay) * Speed * Time.deltaTime;

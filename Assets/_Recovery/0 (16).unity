@@ -119,57 +119,6 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1 &392825862
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 392825864}
-  - component: {fileID: 392825863}
-  m_Layer: 0
-  m_Name: TrainingManager
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 0
---- !u!114 &392825863
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 392825862}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 5c47b26e4e440fb449a46e2c28e7f589, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::RL_StepByStep.DOTS.HexRLManager
-  serverIp: 127.0.0.1
-  serverPort: 5555
-  agentCount: 12
-  MapRadius: 10
-  agentPrefab: {fileID: 688193529}
-  targetTransform: {fileID: 1501244636}
-  moveSpeed: 5
---- !u!4 &392825864
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 392825862}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 4.07609, y: 0, z: 1.42457}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &688193529
 GameObject:
   m_ObjectHideFlags: 0
@@ -291,10 +240,11 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1058418051}
+  - component: {fileID: 1058418052}
   - component: {fileID: 1058418053}
   - component: {fileID: 1058418054}
   m_Layer: 0
-  m_Name: InferenceManager
+  m_Name: TesterManager
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -319,6 +269,25 @@ Transform:
   - {fileID: 2050671056}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1058418052
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1058418050}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5c47b26e4e440fb449a46e2c28e7f589, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RL_StepByStep.DOTS.HexRLManager
+  serverIp: 127.0.0.1
+  serverPort: 5555
+  agentCount: 12
+  MapRadius: 10
+  agentPrefab: {fileID: 688193529}
+  targetTransform: {fileID: 1501244636}
+  moveSpeed: 5
 --- !u!114 &1058418053
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -357,11 +326,9 @@ MonoBehaviour:
   - {fileID: 1255635346}
   - {fileID: 1120149058}
   - {fileID: 2050671056}
-  runnerTest: {fileID: 1058418053}
   arrivalThreshold: 0.5
   spawnRange: 10
   Speed: 10
-  MapSize: 10
 --- !u!1 &1104135890
 GameObject:
   m_ObjectHideFlags: 0
@@ -1037,6 +1004,5 @@ SceneRoots:
   m_Roots:
   - {fileID: 1104135893}
   - {fileID: 1646951079}
-  - {fileID: 392825864}
   - {fileID: 1058418051}
   - {fileID: 1501244636}

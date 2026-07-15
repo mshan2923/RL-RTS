@@ -17,6 +17,9 @@ public class InferenceRunnerTest : MonoBehaviour
 
     [Header("모델 설정")]
     public int    inputDim   = 2;    // feat 크기 (마지막 차원)
+    /// <summary>
+    /// 시퀀스 길이
+    /// </summary>
     public int    seqLen     = 1;   // 시퀀스 길이 (2D면 1)
     public int    outputDim  = 2;
     public string inputName  = "observation";
