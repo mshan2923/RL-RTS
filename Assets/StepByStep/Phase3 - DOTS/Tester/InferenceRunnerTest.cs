@@ -16,7 +16,7 @@ public class InferenceRunnerTest : MonoBehaviour
     public ModelAsset modelAsset;
 
     [Header("모델 설정")]
-    public int    inputDim   = 2;    // feat 크기 (마지막 차원)
+    public int    inputDim   = 7;    // feat 크기 (마지막 차원)
     /// <summary>
     /// 시퀀스 길이
     /// </summary>

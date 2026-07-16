@@ -1,9 +1,10 @@
 namespace RL_StepByStep
 {
-        using UnityEngine;
+    using UnityEngine;
     using Unity.Collections;
     using System.Text;
     using Unity.Mathematics;
+    using Unity.Entities;
 
     public class Phase3TestManager : MonoBehaviour
     {
@@ -20,8 +21,9 @@ namespace RL_StepByStep
         private NativeArray<Phase3Observation> obsArray;
         private NativeArray<Phase3Action> actionArray;
 
-        // 파이썬 응답을 대기 중인지 체크하는 플래그
         private bool isWaiting = false;
+
+        EntityManager em;
 
         void Start()
         {
@@ -32,29 +34,32 @@ namespace RL_StepByStep
 
             for (int i = 0; i < agentCount; i++)
             {
-                Vector3 randomPos = new Vector3(UnityEngine.Random.Range(-MapRadius, MapRadius), 0.5f, UnityEngine.Random.Range(-MapRadius, MapRadius));
+                Vector3 randomPos = new Vector3(UnityEngine.Random.Range(0, MapRadius * 2), 0.5f, UnityEngine.Random.Range(0, MapRadius * 2));
                 agents[i] = Instantiate(agentPrefab, randomPos, Quaternion.identity, transform);
             }
+
+            em = World.DefaultGameObjectInjectionWorld.EntityManager;
         }
 
-        // [수정] async void로 변경하여 내부에서 await를 쓸 수 있게 함
         async void Update()
         {
             if (targetTransform == null) return;
-            
-            // 이미 파이썬이 계산 중이라면 이번 프레임은 그냥 통과 (화면 멈춤 방지)
             if (isWaiting) return;
 
             isWaiting = true;
 
-            // 관측 데이터 수집
             for (int i = 0; i < agentCount; i++)
             {
                 Vector3 agentPos = agents[i].transform.position;
                 Vector3 targetPos = targetTransform.position;
                 Vector3 directionToTarget = (targetPos - agentPos).normalized;
 
-                var isDone = CalculateReward(agents[i], targetTransform, float3.zero, out var reward);
+                // 1. ECS 영역에서 벽 감지 데이터 먼저 확보하기
+                var entity = Phase3Connecter.Instace.Unit[i];
+                var data = em.GetComponentData<DetectWallNormalize>(entity);
+
+                // 2. 확보한 벽 데이터를 보상 함수에 함께 넘겨주기
+                var isDone = CalculateReward(agents[i], targetTransform, float3.zero, data, out var reward);
 
                 Debug.Log($"{isDone} : {reward}");
 
@@ -63,17 +68,22 @@ namespace RL_StepByStep
                     unitId = i,
                     dx = directionToTarget.x,
                     dy = directionToTarget.z,
+                    d0 = data.n0,
+                    d1 = data.n1,
+                    d2 = data.n2,
+                    d3 = data.n3,
+                    d4 = data.n4,
+                    d5 = data.n5,
                     reward = reward,
                     done = isDone ? 1 : 0
                 };
                 
                 if (isDone)
-                    agents[i].transform.position = new Vector3(UnityEngine.Random.Range(-MapRadius, MapRadius), 0.5f, UnityEngine.Random.Range(-MapRadius, MapRadius));
+                    agents[i].transform.position = new Vector3(UnityEngine.Random.Range(0, MapRadius * 2), 0.5f, UnityEngine.Random.Range(0, MapRadius * 2));
             }
 
             try
             {
-                // 비동기로 서버에 던지고 응답이 올 때까지 메인 스레드를 양보함
                 await trainingPolicy.UpdateTrainingAsync(obsArray, actionArray);
 
                 {
@@ -84,7 +94,6 @@ namespace RL_StepByStep
                     print(sb.ToString());
                 }
 
-                // 응답이 도착한 후에만 유닛들을 이동시킴 (인과관계 유지)
                 for (int i = 0; i < agentCount; i++)
                 {
                     Phase3Action action = actionArray[i];
@@ -98,7 +107,6 @@ namespace RL_StepByStep
             }
             finally
             {
-                // 에러가 나든 성공하든 대기 플래그를 풀어서 다음 턴 진행
                 isWaiting = false;
             }
         }
@@ -110,30 +118,55 @@ namespace RL_StepByStep
             trainingPolicy?.Dispose();
         }
 
-        bool CalculateReward(GameObject agent, Transform Target, float3 mapCenter, out float reward)
+        // 매개변수에 DetectWallNormalize를 추가해 계산에 활용해
+        bool CalculateReward(GameObject agent, Transform Target, float3 mapCenter, DetectWallNormalize wallData, out float reward)
         {
             float3 agentPos = agent.transform.position;
             float3 targetPos = Target.position;
             
-            // 1. 진짜 맵 중심 기준으로 원형 탈출 체크
-            if (math.any(math.abs(agentPos - mapCenter) > MapRadius))//(math.distance(agentPos, mapCenter) > MapRadius)
+            // 1. 맵 외곽 탈출 체크
+            if (math.any(math.abs(agentPos - mapCenter) > MapRadius))
             {
                 reward = -5f;
-                return true; // 에피소드 종료
+                return true; 
+            }
+
+            // 2. 벽 감지 및 패널티 부여 (6개 센서 중 가장 가까운 벽 거리 탐색)
+            float minWallDist = math.min(wallData.n0, 
+                                math.min(wallData.n1, 
+                                math.min(wallData.n2, 
+                                math.min(wallData.n3, 
+                                math.min(wallData.n4, wallData.n5)))));
+
+            // 벽에 완전히 들이받은 상황 (충돌선 감지수치 0.05 미만일 때)
+            if (minWallDist < 0.05f)
+            {
+                reward = -15f; // 강한 충돌 페널티
+                return true;  // 갇혀서 페널티만 무한히 쌓이는 걸 막기 위해 즉시 리셋
+            }
+
+            float wallPenalty = 0f;
+            float warningThreshold = 0.3f; // 벽 접근 경고 시작선 (0.3 이하로 좁혀지면 작동)
+
+            if (minWallDist < warningThreshold)
+            {
+                // 벽에 서서히 다가갈수록 페널티가 제곱으로 커지도록 설계
+                float ratio = (warningThreshold - minWallDist) / warningThreshold;
+                wallPenalty = -ratio * ratio * 3.0f; // 근접 페널티 최대치 가중치는 -3.0
             }
 
             float dis = math.distance(targetPos, agentPos);
 
-            // 2. 타겟 도달 체크
+            // 3. 타겟 도달 체크
             if (dis < 1f)
             {
                 reward = 50f;
-                return true; // 에피소드 종료
+                return true; 
             }
 
-            // 3. 거리 기반 보상 설정
-            // 기본적으로 가까울수록 높은 점수를 주되, 타임 페널티(-0.1f)를 주어 빨리 움직이게 유도해
-            reward = (1f - (dis / (MapRadius * 2f))) * 5f - 0.1f;
+            // 4. 거리 기반 보상에 벽 위험 패널티 합산
+            float baseReward = (1f - (dis / (MapRadius * 2f))) * 5f - 0.1f;
+            reward = baseReward + wallPenalty;
 
             return false;
         }

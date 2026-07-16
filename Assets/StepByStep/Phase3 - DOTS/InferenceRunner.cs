@@ -1,17 +1,3 @@
-/*
- * InferenceRunner.cs — Unity Inference Engine 범용 추론 래퍼
- *
- * 사용법
- *   var runner = new InferenceRunner(modelAsset, inputDim:3, outputDim:6);
- *   var runner = new InferenceRunner(modelAsset, inputDim:3, outputDim:6, "obs", "logits");
- *
- * 단일   : Run(NativeArray)         → NativeArray
- * 배치   : RunBatch(NativeArray, n) → NativeArray (n × outputDim flat)
- * 유틸   : ArgMax / ArgMaxBatch / Softmax
- *
- * 반환된 NativeArray는 호출자가 Dispose() 책임
- */
-
 using System;
 using System.Text;
 using Unity.Collections;
@@ -25,7 +11,8 @@ public class InferenceRunner : IDisposable
     public int    InputDim   { get; }
     public int    OutputDim  { get; }
 
-    readonly Worker      _worker;
+    readonly Worker _worker;
+    readonly int    _modelInputRank; // 모델 원본의 차원 수 저장
     bool _disposed;
 
     public InferenceRunner(
@@ -47,14 +34,14 @@ public class InferenceRunner : IDisposable
         var inp  = inputName  != null ? FindInput (model, inputName)  : model.inputs[0];
         var outp = outputName != null ? FindOutput(model, outputName) : model.outputs[0];
 
-        InputName   = inp.name;
-        OutputName  = outp.name;
-        InputDim    = inputDim;
-        OutputDim   = outputDim;
+        InputName       = inp.name;
+        OutputName      = outp.name;
+        InputDim        = inputDim;
+        OutputDim       = outputDim;
+        _modelInputRank = inp.shape.rank; // 모델의 입력 차원(Rank) 감지
 
         Debug.Log($"[InferenceRunner] input='{InputName}'(dim={InputDim})  " +
-                  $"output='{OutputName}'(dim={OutputDim})  shape=\n"//{_inputShape}
-                  + DumpModelInfo(model));
+                  $"output='{OutputName}'(dim={OutputDim}) rank={_modelInputRank}\n" + DumpModelInfo(model));
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -66,7 +53,7 @@ public class InferenceRunner : IDisposable
         using var t = MakeTensor(input, 1);
         _worker.SetInput(InputName, t);
         _worker.Schedule();
-        return ReadOutput();
+        return ReadOutput(Allocator.TempJob);
     }
 
     public async Awaitable<NativeArray<float>> RunAsync(NativeArray<float> input)
@@ -84,10 +71,17 @@ public class InferenceRunner : IDisposable
     public NativeArray<float> RunBatch(NativeArray<float> input, int n)
     {
         ThrowIfDisposed();
+
+        Debug.Log($"<color=cyan>[InferenceRunner 진단]</color> " +
+              $"입력 배열 길이(input.Length) = {input.Length} | " +
+              $"요청 배치 크기(n) = {n} | " +
+              $"설정된 InputDim = {InputDim} | " +
+              $"이론상 필요 크기(n * InputDim) = {n * InputDim}");
+              
         using var t = MakeTensor(input, n);
         _worker.SetInput(InputName, t);
         _worker.Schedule();
-        return ReadOutput();
+        return ReadOutput(Allocator.TempJob);
     }
 
     public async Awaitable<NativeArray<float>> RunBatchAsync(NativeArray<float> input, int n)
@@ -100,7 +94,7 @@ public class InferenceRunner : IDisposable
     }
 
     // ════════════════════════════════════════════════════════════════
-    // 유틸
+    // 유틸리티 함수
     // ════════════════════════════════════════════════════════════════
     public int ArgMax(NativeArray<float> input)
     {
@@ -114,7 +108,6 @@ public class InferenceRunner : IDisposable
         return BestIdx(output);
     }
 
-    /// 반환: NativeArray<int> 길이 n  (호출자 Dispose)
     public NativeArray<int> ArgMaxBatch(NativeArray<float> input, int n)
     {
         using var output = RunBatch(input, n);
@@ -127,7 +120,6 @@ public class InferenceRunner : IDisposable
         return ExtractArgMax(output, n);
     }
 
-    /// 반환: NativeArray<float> 길이 OutputDim  (호출자 Dispose)
     public NativeArray<float> Softmax(NativeArray<float> input)
     {
         var output = Run(input);
@@ -139,9 +131,6 @@ public class InferenceRunner : IDisposable
         return output;
     }
 
-    // ════════════════════════════════════════════════════════════════
-    // IDisposable
-    // ════════════════════════════════════════════════════════════════
     public void Dispose()
     {
         if (_disposed) return;
@@ -150,43 +139,37 @@ public class InferenceRunner : IDisposable
     }
 
     // ════════════════════════════════════════════════════════════════
-    // 내부 헬퍼
+    // 내부 헬퍼 (차원 자동 적응형 텐서 생성 기법)
     // ════════════════════════════════════════════════════════════════
-
-    // shape 결정
-    // input.Length == n * InputDim          → 2D (n, InputDim)
-    // input.Length == n * seq * InputDim    → 3D (n, seq, InputDim)
     Tensor<float> MakeTensor(NativeArray<float> input, int n)
     {
-        int total = input.Length;
-        int flat  = n * InputDim;
-
-        if (total == flat)
-            return new Tensor<float>(new TensorShape(n, InputDim), input.ToArray());
-
-        // 3D: seq = total / flat
-        if (total % flat == 0)
+        // 모델 원본 차원에 맞춰 셰이프 구조를 분기 처리해서 엔진 내부의 오작동을 차단해
+        if (_modelInputRank == 3)
         {
-            int seq = total / flat;
-            return new Tensor<float>(new TensorShape(n, seq, InputDim), input.ToArray());
+            // (batch, 1, feature) 형태의 3D 구조 대응
+            return new Tensor<float>(new TensorShape(n, 1, InputDim), input);
+        }
+        else if (_modelInputRank == 4)
+        {
+            // 레거시 배라쿠다 호환성 레이아웃이 섞여 있을 때의 4D 대응
+            return new Tensor<float>(new TensorShape(n, 1, 1, InputDim), input);
         }
 
-        // 나눠 떨어지지 않으면 그냥 2D로 (오류는 Inference Engine이 냄)
-        Debug.LogWarning($"[InferenceRunner] 입력 길이 {total} 이 n({n}) × inputDim({InputDim}) 의 배수가 아님");
-        return new Tensor<float>(new TensorShape(n, InputDim), input.ToArray());
+        // 가장 기본 구조인 2D (batch, feature)
+        return new Tensor<float>(new TensorShape(n, InputDim), input);
     }
 
-    NativeArray<float> ReadOutput()
+    NativeArray<float> ReadOutput(Allocator allocator)
     {
         var t = _worker.PeekOutput(OutputName) as Tensor<float>;
         if (t == null)
         {
             Debug.LogError($"[InferenceRunner] '{OutputName}' 출력 없음");
-            return new NativeArray<float>(0, Allocator.TempJob);
+            return new NativeArray<float>(0, allocator);
         }
         using var r  = t.ReadbackAndClone();
         var ro       = r.AsReadOnlyNativeArray();
-        var result   = new NativeArray<float>(ro.Length, Allocator.TempJob);
+        var result   = new NativeArray<float>(ro.Length, allocator);
         NativeArray<float>.Copy(ro, result);
         return result;
     }
@@ -197,18 +180,15 @@ public class InferenceRunner : IDisposable
         if (t == null)
         {
             Debug.LogError($"[InferenceRunner] '{OutputName}' 출력 없음");
-            return new NativeArray<float>(0, Allocator.TempJob);
+            return new NativeArray<float>(0, Allocator.Persistent);
         }
         using var r  = await t.ReadbackAndCloneAsync();
         var ro       = r.AsReadOnlyNativeArray();
-        var result   = new NativeArray<float>(ro.Length, Allocator.TempJob);
+        var result   = new NativeArray<float>(ro.Length, Allocator.Persistent);
         NativeArray<float>.Copy(ro, result);
         return result;
     }
 
-    /// <summary>
-    /// 가장 큰 값이 '어느 위치(Index)에 있는지 / 점수를 받고 해당 인덱스를 리턴
-    /// </summary>
     NativeArray<int> ExtractArgMax(NativeArray<float> output, int n)
     {
         var result = new NativeArray<int>(n, Allocator.TempJob);
@@ -233,35 +213,8 @@ public class InferenceRunner : IDisposable
         return best;
     }
 
-    static Model.Input FindInput(Model m, string name)
-    {
-        foreach (var i in m.inputs) if (i.name == name) return i;
-        throw new Exception($"[InferenceRunner] 입력 '{name}' 없음. 가능: {ListNames(m)}");
-    }
-
-    static Model.Output FindOutput(Model m, string name)
-    {
-        foreach (var o in m.outputs) if (o.name == name) return o;
-        throw new Exception($"[InferenceRunner] 출력 '{name}' 없음.");
-    }
-
-    static string ListNames(Model m)
-    {
-        var sb = new StringBuilder();
-        foreach (var i in m.inputs) sb.Append($"'{i.name}' ");
-        return sb.ToString();
-    }
-
-    static string DumpModelInfo(Model m)
-    {
-        var sb = new StringBuilder();
-        foreach (var i in m.inputs)  sb.AppendLine($"  IN  '{i.name}' {i.shape}");
-        foreach (var o in m.outputs) sb.AppendLine($"  OUT '{o.name}'");
-        return sb.ToString();
-    }
-
-    void ThrowIfDisposed()
-    {
-        if (_disposed) throw new ObjectDisposedException(nameof(InferenceRunner));
-    }
+    static Model.Input FindInput(Model m, string name) { foreach (var i in m.inputs) if (i.name == name) return i; throw new Exception($"입력 '{name}' 없음."); }
+    static Model.Output FindOutput(Model m, string name) { foreach (var o in m.outputs) if (o.name == name) return o; throw new Exception($"출력 '{name}' 없음."); }
+    static string DumpModelInfo(Model m) { var sb = new StringBuilder(); foreach (var i in m.inputs) sb.AppendLine($"  IN  '{i.name}' {i.shape}"); foreach (var o in m.outputs) sb.AppendLine($"  OUT '{o.name}'"); return sb.ToString(); }
+    void ThrowIfDisposed() { if (_disposed) throw new ObjectDisposedException(nameof(InferenceRunner)); }
 }

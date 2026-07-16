@@ -11,6 +11,7 @@ namespace RL_StepByStep
         public float unitId;
         public float dx; // 목표까지 상대 x (정규화)
         public float dy; // 목표까지 상대 y (정규화)
+        public float d0, d1, d2, d3, d4, d5;
         public float reward;
         public float done;
     }

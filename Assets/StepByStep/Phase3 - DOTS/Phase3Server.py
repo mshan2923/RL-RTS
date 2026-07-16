@@ -17,8 +17,8 @@ import torch
 # =========================================================================
 class RLConfig:
     # 유니티 C# 구조체와 매핑될 바이트 포맷 (<: 리틀엔디안, i: int, f: float)
-    # 현재 구조: unit_id(int), dx(float), dy(float), reward(float), done(int)
-    OBS_FORMAT = "<i3fi"
+    # 현재 구조: unit_id(int), dx(float), dy(float), d0 ~ d5(float), reward(float), done(int)
+    OBS_FORMAT = "<i9fi"
     OBS_SIZE = struct.calcsize(OBS_FORMAT)
     
     # 유니티로 보낼 액션 바이트 포맷
@@ -27,7 +27,7 @@ class RLConfig:
     ACTION_SIZE = struct.calcsize(ACTION_FORMAT)
     
     # Sentis 가변 배치와 연동할 '에이전트 1개 기준' 차원 정의
-    OBS_SHAPE = (2,)      # [dx, dy] 이므로 2차원
+    OBS_SHAPE = (8,)      # [dx, dy] 이므로 2차원
     ACTION_SHAPE = (2,)   # [ax, ay] 이므로 2차원
     
     # 데이터 스페이스 범위 설정
@@ -38,11 +38,18 @@ class RLConfig:
     def unpack_observation(data_bytes, offset):
         """유니티에서 받은 raw 바이트를 해석해서 데이터 딕셔너리로 쪼개줘"""
         raw_data = struct.unpack(RLConfig.OBS_FORMAT, data_bytes[offset : offset + RLConfig.OBS_SIZE])
-        unit_id, dx, dy, reward, done = raw_data
+        
+        # OBS_SHAPE 크기에 맞춰서 동적으로 데이터를 슬라이싱해 에러를 원천 차단해
+        num_obs = RLConfig.OBS_SHAPE[0]  # 현재 설정인 7을 가져옴
+        
+        unit_id = raw_data[0]
+        obs_vector = list(raw_data[1 : 1 + num_obs])  # 관측치 개수만큼 유연하게 가져오기
+        reward = raw_data[1 + num_obs]                # 관측치 바로 다음 인덱스는 reward
+        done = raw_data[2 + num_obs]                  # 맨 마지막 인덱스는 done
         
         return {
             "unit_id": unit_id,
-            "obs_vector": [dx, dy],  # 신경망 입력으로 들어갈 핵심 벡터야
+            "obs_vector": obs_vector,  # 신경망 입력으로 들어갈 핵심 벡터
             "reward": reward,
             "done": bool(done)
         }
@@ -219,28 +226,44 @@ class UnityHexVecEnv(VecEnv):
         self.actions = actions
 
     def step_wait(self):
-        self.bridge.send_action(self.actions)
+            self.bridge.send_action(self.actions)
 
-        # 액션이 적용된 결과 데이터 패킷 수신
-        batch_data = self.bridge.wait_obs()
-        
-        obs = np.array([d["obs_vector"] for d in batch_data], dtype=np.float32)
-        rewards = np.array([d["reward"] for d in batch_data], dtype=np.float32)
-        dones = np.array([d["done"] for d in batch_data], dtype=bool)
-        
-        # 에이전트 동기화 리셋 판정
-        if np.any(dones):
-            dones[:] = True
+            # 액션이 적용된 결과 데이터 패킷 수신
+            batch_data = self.bridge.wait_obs()
             
-            # 리셋 직후 유니티 씬의 깨끗한 첫 관측 데이터를 강제로 가져와서 대입해 (VecEnv 규격 필수사항)
-            next_batch_data = self.bridge.wait_obs()
-            next_obs = np.array([d["obs_vector"] for d in next_batch_data], dtype=np.float32)
+            # [안전장치 추가] 유니티가 보낸 데이터 개수와 기대하는 에이전트 개수(12)가 맞는지 검증해
+            if len(batch_data) != self.num_envs:
+                raise ValueError(
+                    f"\n[에러] 유니티에서 보낸 에이전트 개수 불일치!\n"
+                    f"기대치(num_envs): {self.num_envs}개, 실제 받은 개수: {len(batch_data)}개.\n"
+                    f"유니티 씬 리셋이나 스폰 타이밍에 에이전트가 순간적으로 사라졌는지 확인해봐!"
+                )
             
-            infos = [{"terminal_observation": obs[i]} for i in range(self.num_envs)]
-            return next_obs, rewards, dones, infos
-        
-        infos = [{} for _ in range(self.num_envs)]
-        return obs, rewards, dones, infos
+            obs = np.array([d["obs_vector"] for d in batch_data], dtype=np.float32)
+            rewards = np.array([d["reward"] for d in batch_data], dtype=np.float32)
+            dones = np.array([d["done"] for d in batch_data], dtype=bool)
+            
+            # 에이전트 동기화 리셋 판정
+            if np.any(dones):
+                dones[:] = True
+                
+                # 리셋 직후의 첫 데이터 수신
+                next_batch_data = self.bridge.wait_obs()
+                
+                # [리셋 시점에도 안전장치 검증]
+                if len(next_batch_data) != self.num_envs:
+                    raise ValueError(
+                        f"\n[리셋 에러] 리셋 후 받은 에이전트 개수 불일치!\n"
+                        f"기대치: {self.num_envs}개, 실제 받은 개수: {len(next_batch_data)}개."
+                    )
+                    
+                next_obs = np.array([d["obs_vector"] for d in next_batch_data], dtype=np.float32)
+                
+                infos = [{"terminal_observation": obs[i]} for i in range(self.num_envs)]
+                return next_obs, rewards, dones, infos
+            
+            infos = [{} for _ in range(self.num_envs)]
+            return obs, rewards, dones, infos
 
     def close(self):
         self.bridge.close()
@@ -292,6 +315,7 @@ if __name__ == "__main__":
     model = PPO(
         "MlpPolicy", 
         env, 
+        device="cuda",
         verbose=1,
         n_steps=128,       
         batch_size=32,
@@ -307,6 +331,6 @@ if __name__ == "__main__":
         print("\n[Train] 사용자에 의해 학습이 중단되었어.")
     finally:
         # 종료 직전에 최종 모델 저장 (마지막은 동기식으로 확실하게)
-        model.policy.save("phase3_final_model.pth")
+        model.save("phase3_final_model.zip")
         bridge.close()
         print("[Train] 최종 모델 저장 완료.")

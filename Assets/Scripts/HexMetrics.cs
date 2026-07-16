@@ -1,31 +1,34 @@
 using Unity.Mathematics;
-using UnityEngine;
 
 public static class HexMetrics
 {
     public const float outerRadius = .51f;
     public const float innerRadius = outerRadius * 1.73205f / 2f; // √3/2
 
-    // Pointy-top 코너
-    public static readonly Vector3[] corners = {
-        new Vector3(0f,          0f, outerRadius),
-        new Vector3(innerRadius, 0f, outerRadius * 0.5f),
-        new Vector3(innerRadius, 0f, -outerRadius * 0.5f),
-        new Vector3(0f,          0f, -outerRadius),
-        new Vector3(-innerRadius, 0f, -outerRadius * 0.5f),
-        new Vector3(-innerRadius, 0f, outerRadius * 0.5f)
-    };
+    private static readonly int2 Even0 = new(1, 1);
+    private static readonly int2 Even1 = new(1, 0);
+    private static readonly int2 Even2 = new(1, -1);
+    private static readonly int2 Even3 = new(0, -1);
+    private static readonly int2 Even4 = new(-1, 0);
+    private static readonly int2 Even5 = new(0, 1);
+
+    private static readonly int2 Odd0 = new(0, 1);
+    private static readonly int2 Odd1 = new(1, 0);
+    private static readonly int2 Odd2 = new(0, -1);
+    private static readonly int2 Odd3 = new(-1, -1);
+    private static readonly int2 Odd4 = new(-1, 0);
+    private static readonly int2 Odd5 = new(-1, 1);
 
 
     private static int3 CubeRound(float x, float y, float z)
     {
-        int rx = Mathf.RoundToInt(x);
-        int ry = Mathf.RoundToInt(y);
-        int rz = Mathf.RoundToInt(z);
+        int rx = (int)math.round(x);
+        int ry = (int)math.round(y);
+        int rz = (int)math.round(z);
 
-        float xDiff = Mathf.Abs(rx - x);
-        float yDiff = Mathf.Abs(ry - y);
-        float zDiff = Mathf.Abs(rz - z);
+        float xDiff = math.abs(rx - x);
+        float yDiff = math.abs(ry - y);
+        float zDiff = math.abs(rz - z);
 
         if (xDiff > yDiff && xDiff > zDiff)
             rx = -ry - rz;
@@ -40,7 +43,7 @@ public static class HexMetrics
     public static int2 WorldToOffset(float3 position)
     {
         // Pointy-top 정확한 world → axial
-        float q = (position.x * Mathf.Sqrt(3f) / 3f - position.z / 3f) / outerRadius;
+        float q = (position.x * math.sqrt(3f) / 3f - position.z / 3f) / outerRadius;
         float r = position.z * 2f / 3f / outerRadius;
 
         int3 cube = CubeRound(q, -q - r, r);
@@ -63,12 +66,12 @@ public static class HexMetrics
     {
         // 0~360 정규화 후 60도 단위로 반올림
         float normalized = ((yawDegrees % 360f) + 360f) % 360f;
-        return Mathf.RoundToInt(normalized / 60f) % 6;
+        return (int)math.round(normalized / 60f) % 6;
     }
     public static int2 WorldToOffsetWithYaw(float3 position, float yawDegrees)
     {
-        float rad = yawDegrees * Mathf.Deg2Rad;
-        float3 dir = new float3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
+        float rad = math.radians(yawDegrees);
+        float3 dir = new float3(math.sin(rad), 0f, math.cos(rad));
 
         return WorldToOffset(position + dir * innerRadius * 2f);
     }
@@ -81,35 +84,25 @@ public static class HexMetrics
 
     public static int2 GetNeighborOffset(int2 current, int rot)
     {
-        bool inner = (current.y & 1) == 0;
+        int index = rot % 6;
+        bool isEven = (current.y & 1) == 0;
 
-        if (rot >= 6) rot %= 6;
-
-        int2 result = current;
-
-        switch (rot)
+        if (isEven)
         {
-            case 0:
-                result = new int2(inner ? current.x : current.x + 1, current.y + 1);
-                break;
-            case 1:
-                result = new int2(current.x + 1, current.y);
-                break;
-            case 2:
-                result = new int2(inner ? current.x : current.x + 1, current.y - 1);
-                break;
-            case 3:
-                result = new int2(inner ? current.x - 1 : current.x, current.y - 1);
-                break;
-            case 4:
-                result = new int2(current.x - 1, current.y);
-                break;
-            case 5:
-                result = new int2(inner ? current.x - 1 : current.x, current.y + 1);
-                break;
+            return index switch
+            {
+                0 => Even0, 1 => Even1, 2 => Even2, 3 => Even3, 4 => Even4, 5 => Even5,
+                _ => Even0
+            };
         }
-
-        return result;
+        else
+        {
+            return index switch
+            {
+                0 => Odd0, 1 => Odd1, 2 => Odd2, 3 => Odd3, 4 => Odd4, 5 => Odd5,
+                _ => Odd0
+            };
+        }
     }
 
     public static int2 GetNeighborOffset(int2 current, float degrees)

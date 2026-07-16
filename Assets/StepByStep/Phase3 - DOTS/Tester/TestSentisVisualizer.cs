@@ -24,17 +24,17 @@ public class SentisVisualizer : MonoBehaviour
     void Start()
     {
         _nAgents = agentTransforms.Length;
-        // input: dx, dy (2개), output: dx, dy (2개)
-        // _runner = new InferenceRunner(modelAsset, inputDim: 2, outputDim: 2);
 
         _runner = new InferenceRunner(runnerTest.modelAsset, runnerTest.inputDim, runnerTest.outputDim);
+
+        Phase3Connecter.Instace.Amount = _nAgents;
     }
 
 
     void Update()
     {
         // 1. 관측치 배열 생성
-        var obsInput = new NativeArray<float>(_nAgents * 2, Allocator.TempJob);
+        var obsInput = new NativeArray<float>(_nAgents * runnerTest.inputDim, Allocator.TempJob);
 
         for (int i = 0; i < _nAgents; i++)
         {
@@ -54,8 +54,10 @@ public class SentisVisualizer : MonoBehaviour
             // 2. 관측값 계산 (새 위치가 반영됨)
             var pos = Target.position - agentTransforms[i].position;
 
-            obsInput[i * 2 + 0] = pos.x / MapSize; 
-            obsInput[i * 2 + 1] = pos.z / MapSize;
+            obsInput[i * runnerTest.inputDim + 0] = pos.x / MapSize; 
+            obsInput[i * runnerTest.inputDim + 1] = pos.z / MapSize;
+
+            //! ==============  관측값!! ========
         }
 
         // 3. 추론 (기존과 동일)
@@ -64,12 +66,17 @@ public class SentisVisualizer : MonoBehaviour
         // 4. 결과 적용 (기존과 동일)
         for (int i = 0; i < _nAgents; i++)
         {
-            float ax = actions[i * 2 + 0];
-            float ay = actions[i * 2 + 1];
+            float ax = actions[i * runnerTest.outputDim + 0];
+            float ay = actions[i * runnerTest.outputDim + 1];
 
             // 이동 적용 (Time.deltaTime 추가해서 부드럽게)
             Vector3 move = new Vector3(ax, 0, ay) * Speed * Time.deltaTime;
             agentTransforms[i].position += move;
+
+
+            {
+                Phase3Connecter.Instace.SetTransform(i, agentTransforms[i].position);
+            }
         }
 
         obsInput.Dispose();
