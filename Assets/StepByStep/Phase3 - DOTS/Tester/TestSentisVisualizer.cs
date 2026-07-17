@@ -1,7 +1,8 @@
 using UnityEngine;
 using Unity.Collections;
 using Unity.InferenceEngine;
-using Unity.Mathematics; // Sentis 네임스페이스
+using Unity.Mathematics;
+using Unity.Entities; // Sentis 네임스페이스
 
 public class SentisVisualizer : MonoBehaviour
 {
@@ -10,7 +11,6 @@ public class SentisVisualizer : MonoBehaviour
     
     [Header("Agents")]
     public Transform Target;
-    public Transform[] agentTransforms; // 테스트할 큐브들
     
     private InferenceRunner _runner;
     public InferenceRunnerTest runnerTest;
@@ -23,11 +23,11 @@ public class SentisVisualizer : MonoBehaviour
 
     void Start()
     {
-        _nAgents = agentTransforms.Length;
 
         _runner = new InferenceRunner(runnerTest.modelAsset, runnerTest.inputDim, runnerTest.outputDim);
 
-        Phase3Connecter.Instace.Amount = _nAgents;
+        _nAgents = Phase3Connecter.Instace.Amount;
+
     }
 
 
@@ -36,14 +36,20 @@ public class SentisVisualizer : MonoBehaviour
         // 1. 관측치 배열 생성
         var obsInput = new NativeArray<float>(_nAgents * runnerTest.inputDim, Allocator.TempJob);
 
+        var data = Phase3Connecter.Instace.Units;
+
         for (int i = 0; i < _nAgents; i++)
         {
+            var trans = data[i].Item1.transform;
+            var entity = data[i].Item2;
+            var wall = World.DefaultGameObjectInjectionWorld.EntityManager.GetComponentData<DetectWallNormalize>(entity);
+
             // --- [추가] 도착 검사 및 재배치 로직 ---
-            float dist = agentTransforms[i].position.magnitude; // (0,0,0)까지의 거리
+            float dist = trans.position.magnitude; // (0,0,0)까지의 거리
             
             if (dist < arrivalThreshold)
             {
-                agentTransforms[i].position = new Vector3(
+                trans.position = new Vector3(
                     UnityEngine.Random.Range(-spawnRange, spawnRange), 
                     0, 
                     UnityEngine.Random.Range(-spawnRange, spawnRange)
@@ -52,12 +58,17 @@ public class SentisVisualizer : MonoBehaviour
             // --------------------------------------
 
             // 2. 관측값 계산 (새 위치가 반영됨)
-            var pos = Target.position - agentTransforms[i].position;
+            var pos = Target.position - trans.position;
 
             obsInput[i * runnerTest.inputDim + 0] = pos.x / MapSize; 
             obsInput[i * runnerTest.inputDim + 1] = pos.z / MapSize;
 
-            //! ==============  관측값!! ========
+            obsInput[i * runnerTest.inputDim + 2] = wall.n0;
+            obsInput[i * runnerTest.inputDim + 3] = wall.n1;
+            obsInput[i * runnerTest.inputDim + 4] = wall.n2;
+            obsInput[i * runnerTest.inputDim + 5] = wall.n3;
+            obsInput[i * runnerTest.inputDim + 6] = wall.n4;
+            obsInput[i * runnerTest.inputDim + 7] = wall.n5;
         }
 
         // 3. 추론 (기존과 동일)
@@ -66,16 +77,18 @@ public class SentisVisualizer : MonoBehaviour
         // 4. 결과 적용 (기존과 동일)
         for (int i = 0; i < _nAgents; i++)
         {
+            var trans = data[i].Item1.transform;
+
             float ax = actions[i * runnerTest.outputDim + 0];
             float ay = actions[i * runnerTest.outputDim + 1];
 
             // 이동 적용 (Time.deltaTime 추가해서 부드럽게)
             Vector3 move = new Vector3(ax, 0, ay) * Speed * Time.deltaTime;
-            agentTransforms[i].position += move;
+            trans.position += move;
 
 
             {
-                Phase3Connecter.Instace.SetTransform(i, agentTransforms[i].position);
+                Phase3Connecter.Instace.SetTransform(i, trans.position);
             }
         }
 

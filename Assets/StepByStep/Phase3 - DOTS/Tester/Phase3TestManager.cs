@@ -55,13 +55,11 @@ namespace RL_StepByStep
                 Vector3 directionToTarget = (targetPos - agentPos).normalized;
 
                 // 1. ECS 영역에서 벽 감지 데이터 먼저 확보하기
-                var entity = Phase3Connecter.Instace.Unit[i];
+                var entity = Phase3Connecter.Instace.Units[i].Item2;
                 var data = em.GetComponentData<DetectWallNormalize>(entity);
 
                 // 2. 확보한 벽 데이터를 보상 함수에 함께 넘겨주기
                 var isDone = CalculateReward(agents[i], targetTransform, float3.zero, data, out var reward);
-
-                Debug.Log($"{isDone} : {reward}");
 
                 obsArray[i] = new Phase3Observation
                 {
@@ -146,13 +144,16 @@ namespace RL_StepByStep
             }
 
             float wallPenalty = 0f;
-            float warningThreshold = 0.3f; // 벽 접근 경고 시작선 (0.3 이하로 좁혀지면 작동)
+            float warningThreshold = 0.1f; // 벽 접근 경고 시작선 (0.3 이하로 좁혀지면 작동)
 
             if (minWallDist < warningThreshold)
             {
                 // 벽에 서서히 다가갈수록 페널티가 제곱으로 커지도록 설계
                 float ratio = (warningThreshold - minWallDist) / warningThreshold;
                 wallPenalty = -ratio * ratio * 3.0f; // 근접 페널티 최대치 가중치는 -3.0
+
+                // reward = wallPenalty;
+                // return true;
             }
 
             float dis = math.distance(targetPos, agentPos);

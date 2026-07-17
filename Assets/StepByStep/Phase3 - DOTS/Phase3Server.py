@@ -315,10 +315,10 @@ if __name__ == "__main__":
     model = PPO(
         "MlpPolicy", 
         env, 
-        device="cuda",
+        device="cpu",
         verbose=1,
-        n_steps=128,       
-        batch_size=32,
+        n_steps=512,       
+        batch_size=256,
         learning_rate=3e-4,
     )
 

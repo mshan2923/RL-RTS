@@ -15,7 +15,9 @@ public class Phase3Connecter : MonoBehaviour
     public GameObject UnitPrefab;
     public int Amount;
 
-    public List<Entity> Unit = new();
+    private List<Entity> Unit = new();
+    public List<(GameObject, Entity)> Units = new();
+
     EntityManager em;
 
     NativeArray<Entity> spawned;
@@ -31,11 +33,16 @@ public class Phase3Connecter : MonoBehaviour
         var query = em.CreateEntityQuery(typeof(Phase3UnitManagerComponent));
         var unitManager = query.GetSingleton<Phase3UnitManagerComponent>();
 
+
         spawned = em.Instantiate(unitManager.Prefab, Amount, Allocator.Persistent);
         Unit.AddRange(spawned);
+    
 
         for(int i = 0; i < Unit.Count; i++)
         {
+            var trans = GameObject.Instantiate(UnitPrefab, transform);
+            Units.Add((trans, Unit[i]));
+
             em.SetName(Unit[i], $"Unit {i}");
             em.SetComponentData(Unit[i], new UnitComponent
             {

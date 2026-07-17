@@ -72,11 +72,11 @@ public class InferenceRunner : IDisposable
     {
         ThrowIfDisposed();
 
-        Debug.Log($"<color=cyan>[InferenceRunner 진단]</color> " +
-              $"입력 배열 길이(input.Length) = {input.Length} | " +
-              $"요청 배치 크기(n) = {n} | " +
-              $"설정된 InputDim = {InputDim} | " +
-              $"이론상 필요 크기(n * InputDim) = {n * InputDim}");
+        // Debug.Log($"<color=cyan>[InferenceRunner 진단]</color> " +
+        //       $"입력 배열 길이(input.Length) = {input.Length} | " +
+        //       $"요청 배치 크기(n) = {n} | " +
+        //       $"설정된 InputDim = {InputDim} | " +
+        //       $"이론상 필요 크기(n * InputDim) = {n * InputDim}");
               
         using var t = MakeTensor(input, n);
         _worker.SetInput(InputName, t);
