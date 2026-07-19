@@ -108,7 +108,7 @@ public static class HexMetrics
     public static int2 GetNeighborOffset(int2 current, float degrees)
     {
         int rot = HexMetrics.WorldYawToIndex(degrees);
-        return GetNeighborOffset(current, rot);
+        return current + GetNeighborOffset(current, rot);
     }
 }
 

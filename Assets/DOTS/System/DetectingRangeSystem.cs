@@ -109,10 +109,12 @@ partial struct DetectingRangeSystem : ISystem
 
                     if (TileMap.TryGetValue(currentTemp, out var tileEntity))
                     {
+
                         if (tileEntity.Tile.OwnerID == GroupType.Wall)
                         {
                             EditDetectWall(i, ref detectWall, math.clamp(math.distance(transform.Position, HexMetrics.OffsetToWorld(currentTemp)) / range, 0f, 1f));
                             foundWall = true;
+
                             break; // 벽 찾았으니 종료
                         }
                     }

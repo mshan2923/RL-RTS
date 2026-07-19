@@ -5,6 +5,9 @@ namespace RL_StepByStep
     using System.Text;
     using Unity.Mathematics;
     using Unity.Entities;
+    using Unity.Transforms;
+    using Unity.Entities.UniversalDelegates;
+    using System.Threading.Tasks;
 
     public class Phase3TestManager : MonoBehaviour
     {
@@ -24,6 +27,12 @@ namespace RL_StepByStep
         private bool isWaiting = false;
 
         EntityManager em;
+        public static readonly float FixedStepSize = 0.02f;
+        private const float ReachDistance = 0.75f;
+
+        RLConfig rLConfig;
+
+        float RadiusThreshold = 0.1f;
 
         void Start()
         {
@@ -39,7 +48,18 @@ namespace RL_StepByStep
             }
 
             em = World.DefaultGameObjectInjectionWorld.EntityManager;
+
+
+            //        if (!SystemAPI.TryGetSingleton<RLConfig>(out var config)) return;
+
+            rLConfig = em.CreateEntityQuery(typeof(RLConfig)).GetSingleton<RLConfig>();
+
+            RadiusThreshold = 1f / rLConfig.DetectionRange; // CellRadius : 1
+
+
         }
+
+
 
         async void Update()
         {
@@ -52,7 +72,7 @@ namespace RL_StepByStep
             {
                 Vector3 agentPos = agents[i].transform.position;
                 Vector3 targetPos = targetTransform.position;
-                Vector3 directionToTarget = (targetPos - agentPos).normalized;
+                Vector3 directionToTarget = (targetPos - agentPos) / MapRadius;
 
                 // 1. ECS 영역에서 벽 감지 데이터 먼저 확보하기
                 var entity = Phase3Connecter.Instace.Units[i].Item2;
@@ -84,19 +104,33 @@ namespace RL_StepByStep
             {
                 await trainingPolicy.UpdateTrainingAsync(obsArray, actionArray);
 
-                {
-                    var sb = new StringBuilder();
-                    for (int i = 0; i < agentCount; i++)
-                        sb.AppendLine($"actionArray[{i}] : {actionArray[i].dx} , {actionArray[i].dy}");
+                // {
+                //     var sb = new StringBuilder();
+                //     for (int i = 0; i < agentCount; i++)
+                //         sb.AppendLine($"actionArray[{i}] : {actionArray[i].dx} , {actionArray[i].dy}");
 
-                    print(sb.ToString());
-                }
+                //     print(sb.ToString());
+                // }
 
                 for (int i = 0; i < agentCount; i++)
                 {
                     Phase3Action action = actionArray[i];
-                    Vector3 movement = new Vector3(action.dx, 0f, action.dy) * moveSpeed * Time.deltaTime;
+                    Vector3 movement = new Vector3(action.dx, 0f, action.dy) * moveSpeed * FixedStepSize;
                     agents[i].transform.Translate(movement, Space.World);
+
+
+                     var entity = Phase3Connecter.Instace.Units[i].Item2;
+
+                    em.SetComponentData(entity, new LocalTransform
+                    {
+                        Position = agents[i].transform.position,
+                        Scale = 0.25f
+                    });
+                    em.SetComponentData(entity , new MoveTargetComponent
+                    {
+                        MoveTo = agents[i].transform.position
+                    });
+
                 }
             }
             catch (System.Exception e)
@@ -123,7 +157,7 @@ namespace RL_StepByStep
             float3 targetPos = Target.position;
             
             // 1. 맵 외곽 탈출 체크
-            if (math.any(math.abs(agentPos - mapCenter) > MapRadius))
+            if (math.any(agentPos < 0) || math.any(agentPos > 2 * MapRadius))
             {
                 reward = -5f;
                 return true; 
@@ -136,31 +170,30 @@ namespace RL_StepByStep
                                 math.min(wallData.n3, 
                                 math.min(wallData.n4, wallData.n5)))));
 
+            
+
             // 벽에 완전히 들이받은 상황 (충돌선 감지수치 0.05 미만일 때)
-            if (minWallDist < 0.05f)
-            {
-                reward = -15f; // 강한 충돌 페널티
-                return true;  // 갇혀서 페널티만 무한히 쌓이는 걸 막기 위해 즉시 리셋
-            }
+            // if (minWallDist < RadiusThreshold)
+            // {
+            //     reward = -15f; // 강한 충돌 페널티
+            //     return true;  // 갇혀서 페널티만 무한히 쌓이는 걸 막기 위해 즉시 리셋
+            // }
 
             float wallPenalty = 0f;
-            float warningThreshold = 0.1f; // 벽 접근 경고 시작선 (0.3 이하로 좁혀지면 작동)
+            float warningThreshold = RadiusThreshold * 3f; // 벽 접근 경고 시작선 (0.3 이하로 좁혀지면 작동)
 
             if (minWallDist < warningThreshold)
             {
                 // 벽에 서서히 다가갈수록 페널티가 제곱으로 커지도록 설계
                 float ratio = (warningThreshold - minWallDist) / warningThreshold;
-                wallPenalty = -ratio * ratio * 3.0f; // 근접 페널티 최대치 가중치는 -3.0
-
-                // reward = wallPenalty;
-                // return true;
+                wallPenalty = -ratio * 5f;
             }
 
             float dis = math.distance(targetPos, agentPos);
-
             // 3. 타겟 도달 체크
-            if (dis < 1f)
+            if (dis <  ReachDistance)
             {
+                Debug.Log("goal");
                 reward = 50f;
                 return true; 
             }

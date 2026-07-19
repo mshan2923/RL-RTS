@@ -6,4 +6,5 @@ public struct MapConfig : IComponentData
     public int Width;
     public int Height;
     public float Radius;
+    public static readonly float FixedStepSize = 0.02f;
 }

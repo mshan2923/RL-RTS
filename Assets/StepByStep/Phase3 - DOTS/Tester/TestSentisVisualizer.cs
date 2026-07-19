@@ -2,7 +2,8 @@ using UnityEngine;
 using Unity.Collections;
 using Unity.InferenceEngine;
 using Unity.Mathematics;
-using Unity.Entities; // Sentis 네임스페이스
+using Unity.Entities;
+using Unity.Transforms; // Sentis 네임스페이스
 
 public class SentisVisualizer : MonoBehaviour
 {
@@ -20,15 +21,42 @@ public class SentisVisualizer : MonoBehaviour
     public float spawnRange = 10f;        // 랜덤 위치 생성 범위 (-10 ~ 10)
     public float Speed = 10;
     public float MapSize = 10f;
+    private const float FixedStepSize = 0.02f;
 
-    void Start()
+    async void Start()
     {
 
         _runner = new InferenceRunner(runnerTest.modelAsset, runnerTest.inputDim, runnerTest.outputDim);
 
         _nAgents = Phase3Connecter.Instace.Amount;
 
+            Debug.Log("--");
+        await LateStart();
     }
+
+        async Awaitable LateStart()
+        {
+            var em = World.DefaultGameObjectInjectionWorld.EntityManager;
+
+            while(Phase3Connecter.Instace.Units.Count == 0)
+                await Awaitable.NextFrameAsync();
+
+            foreach(var (v,k) in Phase3Connecter.Instace.Units)
+            {
+                v.transform.position = new Vector3(UnityEngine.Random.Range(1f, MapSize * 2 - 1f), 0.5f, UnityEngine.Random.Range(1f, MapSize * 2 - 1f));
+                em.SetComponentData(k, new LocalTransform
+                {
+                   Position = v.transform.position,
+                   Scale = 0.25f 
+                });
+                em.SetComponentData(k , new MoveTargetComponent
+                {
+                    MoveTo = v.transform.position
+                });
+            }
+
+            Debug.Log($"-- {Phase3Connecter.Instace.Units.Count}");
+        }
 
 
     void Update()
@@ -44,21 +72,10 @@ public class SentisVisualizer : MonoBehaviour
             var entity = data[i].Item2;
             var wall = World.DefaultGameObjectInjectionWorld.EntityManager.GetComponentData<DetectWallNormalize>(entity);
 
-            // --- [추가] 도착 검사 및 재배치 로직 ---
-            float dist = trans.position.magnitude; // (0,0,0)까지의 거리
-            
-            if (dist < arrivalThreshold)
-            {
-                trans.position = new Vector3(
-                    UnityEngine.Random.Range(-spawnRange, spawnRange), 
-                    0, 
-                    UnityEngine.Random.Range(-spawnRange, spawnRange)
-                );
-            }
-            // --------------------------------------
 
             // 2. 관측값 계산 (새 위치가 반영됨)
             var pos = Target.position - trans.position;
+
 
             obsInput[i * runnerTest.inputDim + 0] = pos.x / MapSize; 
             obsInput[i * runnerTest.inputDim + 1] = pos.z / MapSize;
@@ -82,13 +99,13 @@ public class SentisVisualizer : MonoBehaviour
             float ax = actions[i * runnerTest.outputDim + 0];
             float ay = actions[i * runnerTest.outputDim + 1];
 
-            // 이동 적용 (Time.deltaTime 추가해서 부드럽게)
-            Vector3 move = new Vector3(ax, 0, ay) * Speed * Time.deltaTime;
-            trans.position += move;
 
+            trans.Translate(new Vector3(ax, 0, ay) * Speed * FixedStepSize, Space.World);
+
+            // trans.position += move;
 
             {
-                Phase3Connecter.Instace.SetTransform(i, trans.position);
+                Phase3Connecter.Instace.SyncTransform(i, trans.position);
             }
         }
 

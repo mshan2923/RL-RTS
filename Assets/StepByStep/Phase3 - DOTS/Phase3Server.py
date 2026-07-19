@@ -317,8 +317,8 @@ if __name__ == "__main__":
         env, 
         device="cpu",
         verbose=1,
-        n_steps=512,       
-        batch_size=256,
+        n_steps=128,       
+        batch_size=32,
         learning_rate=3e-4,
     )
 

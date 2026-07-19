@@ -21,7 +21,6 @@ public class Phase3Connecter : MonoBehaviour
     EntityManager em;
 
     NativeArray<Entity> spawned;
-    public float Scale = 0.25f;
 
     private void Awake() {
         if (_instace == null) _instace = this;
@@ -47,11 +46,6 @@ public class Phase3Connecter : MonoBehaviour
             em.SetComponentData(Unit[i], new UnitComponent
             {
                Id = i 
-            });
-            em.SetComponentData(Unit[i], new LocalTransform
-            {
-                Position = float3.zero,
-                Scale = Scale
             });
 
             em.SetComponentData(Unit[i], new MoveTargetComponent
@@ -80,19 +74,6 @@ public class Phase3Connecter : MonoBehaviour
         spawned.Dispose();
     }
 
-    public void SetTransform(int i , Vector3 pos)
-    {
-        em.SetComponentData(Unit[i], new LocalTransform
-        {
-            Position = pos,
-            Scale = Scale
-        });
-
-        em.SetComponentData(Unit[i], new MoveTargetComponent
-        {
-            MoveTo = pos
-        });
-    }
     public void SyncTransform(int i , Vector3 pos)
     {
         em.SetComponentData(Unit[i], new MoveTargetComponent

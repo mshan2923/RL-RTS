@@ -32,7 +32,14 @@ public partial class MapSpawnerSystem : SystemBase
 
                 // 3. 문법 수정: SetComponentData 사용
                 ecb.SetComponent(tile, LocalTransform.FromPosition(pos));
-                ecb.SetComponent(tile, new HexTile { X = x, Z = z, OwnerID = isWall ? GroupType.Wall : GroupType.None, IsOccupied = false, JustCaptured = false });
+                ecb.SetComponent(tile, new HexTile 
+                {
+                     X = x, Z = z, 
+                     OwnerID = isWall ? GroupType.Wall : GroupType.None, 
+                     IsOccupied = false, 
+                     JustCaptured = false ,
+                     IsBorder = isWall
+                });
                 ecb.AddComponent(tile, new URPMaterialPropertyBaseColor { Value = new float4(1, 1, 1, 1) });
             }
         }
