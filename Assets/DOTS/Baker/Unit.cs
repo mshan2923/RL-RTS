@@ -1,10 +1,10 @@
 using Unity.Entities;
-using Unity.Mathematics;
+using Unity.Rendering;
 using UnityEngine;
 
 class Unit : MonoBehaviour
 {
-    public int Id;
+        public int Id;
 }
 
 class UnitBaker : Baker<Unit>
@@ -21,19 +21,9 @@ class UnitBaker : Baker<Unit>
         {
             MoveTo = authoring.transform.position
         });
-        AddComponent(entity, new DetectWallNormalize
+        AddComponent(entity, new URPMaterialPropertyBaseColor
         {
-            n0 = 1,
-            n1 = 1,
-            n2 = 1,
-            n3 = 1,
-            n4 = 1,
-            n5 = 1
-        });
-        AddComponent(entity, new TargetInfo
-        {
-            Position = float3.zero,
-            IsActive = false,
+            Value = new Unity.Mathematics.float4(1,1,1,1)
         });
     }
 }
