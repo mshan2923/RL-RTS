@@ -1,28 +1,46 @@
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Unity.Collections;
 using Unity.Entities;
 using UnityEngine;
 
-public class SelectUpdater : MonoBehaviour , UnitEnumInterface
+public class SelectUpdater : MonoBehaviour
 {
-    public SelectButton selectButton;
 
-    public void EndInvoke(UnitEnum unitEnum)
-    {
-        Debug.Log($"End");
-    }
+    public SelectButtonSpawner selectButton;
+    public UnitEnumDB unitEnumDB; // 액션 리스트 조회용
 
-    //! SelectUnitEnum 에 연결해둬 이벤트 받기
-    public void Invoke(UnitEnum unitEnum, NativeArray<Entity> unitArray)
-    {
-        //var StartIndex = await selectButton.Initilize(unitArray.Length);
-        Debug.Log($"New Icon : {-1}");
-    }
+    int selectAmount;
 
     // Start is called once before the first execution of Update after the MonoBehaviour is created
-    void Start()
+    void OnEnable()
     {
- 
+        SelectUnitEnum.OnInvoke += Invoke;
+        SelectUnitEnum.OnUpdater += onUpdate;
+        SelectUnitEnum.OnEndInvoke += EndInvoke;
     }
 
+    void OnDisable()
+    {
+        SelectUnitEnum.OnInvoke -= Invoke;
+        SelectUnitEnum.OnUpdater -= onUpdate;
+        SelectUnitEnum.OnEndInvoke -= EndInvoke;
+    }
+
+
+    void Invoke(UnitEnum unitEnum, NativeArray<Entity> unitArray, bool isStart)
+    {
+        var actions = unitEnumDB.Types.Find(t => t.unitType == unitEnum).Pure;
+        selectButton.Initilize(unitEnum, unitArray, actions);
+    }
+    void onUpdate(int selectAll)
+    {
+        selectAmount = selectAll;
+        selectButton.UpdateUI(selectAll);
+    }
+
+    void EndInvoke(List<UnitEnum> activeTypes)
+    {
+
+    }
 }

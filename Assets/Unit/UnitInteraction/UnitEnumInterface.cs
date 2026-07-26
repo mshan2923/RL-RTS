@@ -1,25 +1,28 @@
+using System;
 using Unity.Collections;
 using Unity.Entities;
 using UnityEngine;
 
+public struct UnitActionContext : IDisposable
+{
+    public UnitEnum unitEnum;
+    public NativeArray<Entity> Entities;
+
+    public void Dispose()
+    {
+        if (Entities.IsCreated)
+            Entities.Dispose();
+    }
+}
 public interface UnitEnumInterface
 {
-    public void Invoke(UnitEnum unitEnum, NativeArray<Entity> unitArray);
-    public void EndInvoke(UnitEnum unitEnum);
+    string GetLabel(UnitActionContext ctx);   // UI 표시용
+    bool CanExecute(UnitActionContext ctx);   // 버튼 활성화 여부
+    void Execute(UnitActionContext ctx);      // 실제 실행 (여기서 파라미터 꺼내 씀)
+
 }
 
-[System.Serializable]
-public abstract class UnitEnumAbs : UnitEnumInterface
+public interface Ikill
 {
-    private static UnitEnumAbs _instance;
-    public static UnitEnumAbs instance {get => _instance;}
-    public static UnitEnumAbs initilize<T>() where T : UnitEnumAbs, new()
-    {
-        if (_instance == null)
-            _instance = new T();
-
-        return _instance;
-    }
-    public abstract void Invoke(UnitEnum unitEnum, NativeArray<Entity> unitArray);
-    public abstract void EndInvoke(UnitEnum unitEnum);
+    void invoke(UnitEnum unitEnum);
 }

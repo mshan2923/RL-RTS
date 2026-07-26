@@ -10,7 +10,7 @@ using UnityEngine;
 [System.Serializable]
 public class UnitEnumDBStruct
 {
-    public UnitEnum type;
+    public UnitEnum unitType;
     
     // 제네릭 대신 UnityEngine.Object 기반으로 선언
     [SerializeReference]

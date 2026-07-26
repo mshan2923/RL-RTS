@@ -13,17 +13,27 @@ MonoBehaviour:
   m_Name: UnitEnumDB
   m_EditorClassIdentifier: Assembly-CSharp::UnitEnumDB
   Types:
-  - type: 0
+  - unitType: 0
     Pure:
     - rid: 6739817709566951497
-  - type: 1
-    Pure: []
-  - type: 2
-    Pure: []
+  - unitType: 1
+    Pure:
+    - rid: 6739817715020070982
+  - unitType: 2
+    Pure:
+    - rid: 6739817715020070983
   references:
     version: 2
     RefIds:
     - rid: 6739817709566951497
+      type: {class: BaseMovement, ns: , asm: Assembly-CSharp}
+      data:
+        moveSpeed: 5
+    - rid: 6739817715020070982
+      type: {class: BaseMovement, ns: , asm: Assembly-CSharp}
+      data:
+        moveSpeed: 5
+    - rid: 6739817715020070983
       type: {class: BaseMovement, ns: , asm: Assembly-CSharp}
       data:
         moveSpeed: 5
