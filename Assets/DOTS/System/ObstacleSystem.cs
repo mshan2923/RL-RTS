@@ -124,7 +124,7 @@ public partial class ObstacleSystem : SystemBase
         TileQuery = SystemAPI.QueryBuilder().WithAll<HexTile>().Build();
         
         // 데이터 초기화 (초기에 0으로)
-        data = new NativeParallelHashMap<int2, HexTile>(1024, Allocator.Persistent);
+        //data = new NativeParallelHashMap<int2, HexTile>(1024, Allocator.Persistent);
     }
 
     protected override void OnUpdate()

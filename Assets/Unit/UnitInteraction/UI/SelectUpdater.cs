@@ -28,15 +28,15 @@ public class SelectUpdater : MonoBehaviour
     }
 
 
-    void Invoke(UnitEnum unitEnum, NativeArray<Entity> unitArray, bool isStart)
+    void Invoke(UnitEnum unitEnum, Entity[] unitArray, bool isStart)
     {
         var actions = unitEnumDB.Types.Find(t => t.unitType == unitEnum).Pure;
         selectButton.Initilize(unitEnum, unitArray, actions);
     }
-    void onUpdate(int selectAll)
+    void onUpdate(int selectAll, bool isStart)
     {
         selectAmount = selectAll;
-        selectButton.UpdateUI(selectAll);
+        selectButton.UpdateUI(selectAll, isStart);
     }
 
     void EndInvoke(List<UnitEnum> activeTypes)

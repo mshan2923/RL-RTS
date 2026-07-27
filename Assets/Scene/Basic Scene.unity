@@ -749,7 +749,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 0, y: 300}
+  m_SizeDelta: {x: 0, y: 150}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &1198197708
 MonoBehaviour:
@@ -806,6 +806,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SelectUnitEnum
   enumAmount: 0
   unitEnumDB: {fileID: 11400000, guid: 2aa6c248d3a64a647a749e3eb28ceb74, type: 2}
+  dragInterval: 0.1
 --- !u!4 &1199436524
 Transform:
   m_ObjectHideFlags: 0
@@ -1109,8 +1110,8 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 1780066668}
   m_HandleRect: {fileID: 1780066667}
   m_Direction: 2
-  m_Value: 1
-  m_Size: 0.61
+  m_Value: 0
+  m_Size: 1
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:

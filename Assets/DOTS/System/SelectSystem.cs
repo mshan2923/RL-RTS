@@ -4,6 +4,7 @@ using Unity.Physics;
 using Unity.Rendering;
 using Unity.Transforms;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.LowLevelPhysics2D;
 
 [UpdateAfter(typeof(BakingSystem))]
@@ -50,6 +51,11 @@ partial struct SelectSystem : ISystem
         {
             isDragging = false;
             Vector3 endScreenPos = Input.mousePosition;
+
+            if (EventSystem.current.IsPointerOverGameObject())
+                return;
+            // if (Vector2.SqrMagnitude(endScreenPos - startScreenPos) < 1)
+            //     return;
 
             if (!isShiftPressed)
             {

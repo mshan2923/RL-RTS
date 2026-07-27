@@ -8,6 +8,7 @@ using Unity.Entities;
 using Unity.Entities.UniversalDelegates;
 using Unity.VisualScripting;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 public class SelectButtonSpawner : MonoBehaviour
@@ -24,6 +25,7 @@ public class SelectButtonSpawner : MonoBehaviour
     public HashSet<UnitEnum> key;
 
     int selectAmount = 0;
+    Vector3 mousePos;
 
 
     async void Start()
@@ -35,15 +37,15 @@ public class SelectButtonSpawner : MonoBehaviour
         
     }
 
-    public void Initilize(UnitEnum unitEnum, NativeArray<Entity> unitArray, List<UnitEnumInterface> actions)
+    public void Initilize(UnitEnum unitEnum, Entity[] unitArray, List<UnitEnumInterface> actions)
     {
-        if (unitArray.Length == 0 && selectAmount > 0)
+        if (unitArray.Length == 0 && !EventSystem.current.IsPointerOverGameObject())//Vector3.SqrMagnitude(Input.mousePosition - mousePos) > 1
         {
             DestroySlotsFor(unitEnum);
             return;
         }
 
-        if (!key.Contains(unitEnum))
+        if (!key.Contains(unitEnum) && unitArray.Length > 0)
         {
             key.Add(unitEnum);
             var ctx = new UnitActionContext { unitEnum = unitEnum, Entities = unitArray };
@@ -63,8 +65,13 @@ public class SelectButtonSpawner : MonoBehaviour
         }
     }
 
-    public async void UpdateUI(int selectAll)
+    public async void UpdateUI(int selectAll, bool isStart)
     {
+
+        if (isStart)
+            mousePos = Input.mousePosition;
+
+
         selectAmount = selectAll;
 
         //Initilize 에서 수집하고 여기서 생성 제거를 관리 한다면??
@@ -102,13 +109,6 @@ public class SelectButtonSpawner : MonoBehaviour
         }
     }
 
-    public void ReleaseButton(UnitEnum unitEnum)
-    {
-        //!단순 클릭 구분 
-
-        if (selectAmount > 0)
-            key.Remove(unitEnum);
-    }
 
     async Task LateStartTask(int amount, CancellationToken token)
     {

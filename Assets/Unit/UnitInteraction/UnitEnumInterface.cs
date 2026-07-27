@@ -3,16 +3,10 @@ using Unity.Collections;
 using Unity.Entities;
 using UnityEngine;
 
-public struct UnitActionContext : IDisposable
+public struct UnitActionContext
 {
     public UnitEnum unitEnum;
-    public NativeArray<Entity> Entities;
-
-    public void Dispose()
-    {
-        if (Entities.IsCreated)
-            Entities.Dispose();
-    }
+    public Entity[] Entities;
 }
 public interface UnitEnumInterface
 {

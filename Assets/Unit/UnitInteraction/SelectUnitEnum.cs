@@ -16,8 +16,8 @@ public class SelectUnitEnum : MonoBehaviour
     public UnitEnumDB unitEnumDB;
     public float dragInterval = 0.1f;
 
-    public static event Action<UnitEnum, NativeArray<Entity>, bool> OnInvoke;
-    public static event Action<int> OnUpdater;
+    public static event Action<UnitEnum, Entity[], bool> OnInvoke;
+    public static event Action<int, bool> OnUpdater;
     public static event Action<List<UnitEnum>> OnEndInvoke;
 
     public EntityQuery query;
@@ -26,6 +26,7 @@ public class SelectUnitEnum : MonoBehaviour
     DragState state = DragState.Idle;
     float dragTimer;
     bool isGathering = false;
+
     Dictionary<UnitEnum, HashSet<Entity>> previousSets = new();
 
 
@@ -99,41 +100,53 @@ public class SelectUnitEnum : MonoBehaviour
             Entities = entitiesArr.AsReadOnly()
         }.Schedule(data.Length, JobsUtility.MaxJobThreadCount).Complete();
 
-        OnUpdater?.Invoke(data.Length);
+        OnUpdater?.Invoke(data.Length, isStart);
 
-        foreach (var v in unitEnumDB.Types)
+        if (data.Length > 0 )
         {
-            var searchKey = new UnitEnumComponent(v.unitType);
-            int count = unitMap.CountValuesForKey(searchKey);
-
-            var currentSet = new HashSet<Entity>();
-            if (count > 0 && unitMap.TryGetFirstValue(searchKey, out Entity entity, out var iterator))
+            foreach (var v in unitEnumDB.Types)
             {
-                do { currentSet.Add(entity); }
-                while (unitMap.TryGetNextValue(out entity, ref iterator));
-            }
+                var searchKey = new UnitEnumComponent(v.unitType);
+                int count = unitMap.CountValuesForKey(searchKey);
 
-            bool hasPrevious = previousSets.TryGetValue(v.unitType, out var prevSet);
-            bool changed = isStart || !hasPrevious || !currentSet.SetEquals(prevSet);
+                Debug.Log(count);
 
-            if (changed)
-            {
-                var targetEntities = new NativeArray<Entity>(currentSet.Count, Allocator.Temp);
-
-                int idx = 0;
-                foreach (var e in currentSet) targetEntities[idx++] = e;
-
-                try
+                var currentSet = new HashSet<Entity>();
+                if (count > 0 && unitMap.TryGetFirstValue(searchKey, out Entity entity, out var iterator))
                 {
-                    OnInvoke?.Invoke(v.unitType, targetEntities, isStart);
+                    do { currentSet.Add(entity); }
+                    while (unitMap.TryGetNextValue(out entity, ref iterator));
                 }
-                finally
-                {
-                    targetEntities.Dispose();
-                }
-            }
 
-            previousSets[v.unitType] = currentSet; // 없어졌으면 빈 셋으로 갱신 → 다음 비교 기준
+                bool hasPrevious = previousSets.TryGetValue(v.unitType, out var prevSet);
+                bool changed = isStart || !hasPrevious; //|| !currentSet.SetEquals(prevSet);
+
+                Debug.Log($"{isStart} , {!hasPrevious}, ");//{!currentSet.SetEquals(prevSet)}
+
+                // if (changed)
+                {
+                    var targetEntities = new NativeArray<Entity>(currentSet.Count, Allocator.TempJob);
+
+                    int idx = 0;
+                    foreach (var e in currentSet) targetEntities[idx++] = e;
+
+                    try
+                    {
+                        OnInvoke?.Invoke(v.unitType, targetEntities.ToArray(), isStart);
+                    }
+                    finally
+                    {
+                        targetEntities.Dispose();
+                    }
+                }
+
+                previousSets[v.unitType] = currentSet; // 없어졌으면 빈 셋으로 갱신 → 다음 비교 기준
+            }
+        }
+        else
+        {
+            foreach (var v in unitEnumDB.Types)
+                OnInvoke?.Invoke(v.unitType, new Entity[0], isStart);
         }
 
         data.Dispose();
