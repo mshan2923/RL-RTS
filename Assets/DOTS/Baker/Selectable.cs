@@ -12,6 +12,6 @@ class SelectBaker : Baker<Selectable>
     public override void Bake(Selectable authoring)
     {
         AddComponent<SelectComponent>(GetEntity(authoring, TransformUsageFlags.Dynamic));
-        
+        SetComponentEnabled<SelectComponent>(GetEntity(authoring, TransformUsageFlags.Dynamic), false);
     }
 }

@@ -1,23 +1,34 @@
 using Unity.Burst;
+using Unity.Collections;
 using Unity.Entities;
-using Unity.Physics;
+using Unity.Mathematics;
 using Unity.Rendering;
 using Unity.Transforms;
 using UnityEngine;
 using UnityEngine.EventSystems;
-using UnityEngine.LowLevelPhysics2D;
 
-[UpdateAfter(typeof(BakingSystem))]
 partial struct SelectSystem : ISystem
 {
     private bool isInitialized;
     private bool isDragging;
     private Vector3 startScreenPos;
 
+    EntityQuery directionQuery;
+    EntityQuery selectQuery;
+
     public void OnCreate(ref SystemState state)
     {
         isDragging = false;
         isInitialized = false;
+
+
+        using var build = new EntityQueryBuilder(Allocator.Temp);
+        build.WithAll<CDirectionRequest>();
+        directionQuery = build.Build(ref state);
+
+        using var SelectBuild = new EntityQueryBuilder(Allocator.Temp);
+        SelectBuild.WithDisabled<SelectComponent>();
+        selectQuery = SelectBuild.Build(ref state);
     }
 
     public void OnDestroy(ref SystemState state) { }
@@ -26,72 +37,96 @@ partial struct SelectSystem : ISystem
     {
         if (!isInitialized)
         {
-            isInitialized = true;
-            
-            // 첫 프레임에 시작하자마자 비활성화 처리
-            foreach (var (_, entity) in SystemAPI.Query<SelectComponent>().WithEntityAccess())
             {
-                SystemAPI.SetComponentEnabled<SelectComponent>(entity, false);
+                int count = selectQuery.CalculateEntityCount();
+                if (count == 0)
+                {
+                    return;
+                }
             }
+
+            isInitialized = true;
+
+            foreach (var (_, entity) in SystemAPI.Query<SelectComponent>().WithEntityAccess())
+                SystemAPI.SetComponentEnabled<SelectComponent>(entity, false);
         }
 
-        // 이후 평소 로직 수행
-        if (!isInitialized) return;
-
-        // var physics = SystemAPI.GetSingleton<PhysicsWorldSingleton>();
         bool isShiftPressed = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
-        if (Input.GetMouseButtonDown(0))
+        if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
         {
             isDragging = true;
             startScreenPos = Input.mousePosition;
+
+
+            return;
         }
 
-        if (Input.GetMouseButton(0))//(isDragging && Input.GetMouseButtonUp(0))
+        Debug.Log("isDragging");
+
+        if (!isDragging) return;
+
+        Camera cam = Camera.main;
+        if (cam == null) return;
+
+        Rect rect = GetScreenRect(startScreenPos, Input.mousePosition);
+
+        // 드래그 중: 실제 선택 상태는 그대로 두고, 색상만 미리보기로 갱신
+        foreach (var (transform, entity) in SystemAPI.Query<RefRO<LocalTransform>>().WithAll<UnitComponent>().WithEntityAccess())
         {
-            isDragging = false;
-            Vector3 endScreenPos = Input.mousePosition;
+            Debug.Log("--");
+            Vector3 screenPos = cam.WorldToScreenPoint(transform.ValueRO.Position);
+            bool isInside = screenPos.z > 0 && rect.Contains(new Vector2(screenPos.x, screenPos.y));
+            bool alreadySelected = state.EntityManager.IsComponentEnabled<SelectComponent>(entity);
 
-            if (EventSystem.current.IsPointerOverGameObject())
-                return;
-            // if (Vector2.SqrMagnitude(endScreenPos - startScreenPos) < 1)
-            //     return;
+            bool previewSelected = isInside || (isShiftPressed && alreadySelected);
 
+            state.EntityManager.SetComponentData(entity, new URPMaterialPropertyBaseColor
+            {
+                Value = previewSelected ? new float4(1, 0, 0, 1) : new float4(1, 1, 1, 1)
+            });
+            
+        }
+
+        if (!Input.GetMouseButtonUp(0)) return;
+
+        // 뗀 순간: 여기서만 실제 선택 상태를 확정
+        isDragging = false;
+
+        var hitEntities = new System.Collections.Generic.List<Entity>();
+        foreach (var (transform, entity) in SystemAPI.Query<RefRO<LocalTransform>>().WithAll<UnitComponent>().WithEntityAccess())
+        {
+            Vector3 screenPos = cam.WorldToScreenPoint(transform.ValueRO.Position);
+            if (screenPos.z > 0 && rect.Contains(new Vector2(screenPos.x, screenPos.y)))
+                hitEntities.Add(entity);
+        }
+
+        // 아무것도 안 걸렸으면 기존 선택은 절대 건드리지 않음
+        if (hitEntities.Count > 0)
+        {
             if (!isShiftPressed)
             {
-                foreach (var (selectComp, entity) in SystemAPI.Query<RefRW<SelectComponent>>().WithEntityAccess())
-                {
+                foreach (var (sel, entity) in SystemAPI.Query<RefRW<SelectComponent>>().WithEntityAccess())
                     state.EntityManager.SetComponentEnabled<SelectComponent>(entity, false);
-                    state.EntityManager.SetComponentData(entity, new URPMaterialPropertyBaseColor
-                    {
-                        Value = new Unity.Mathematics.float4 (1,1,1,1)
-                    });
-                }
             }
+            foreach (var entity in hitEntities)
+                state.EntityManager.SetComponentEnabled<SelectComponent>(entity, true);
+        }else
+        {
+            // if (SystemAPI.GetSingleton<CDirectionRequestPending>().Value)
+            //     Debug.Log("Directing");
 
-            Camera cam = Camera.main;
-            if (cam != null)
+            SelectUnitEnum.SelectionEvents.RaiseNothingSelected();
+        }
+
+        // 색상을 실제 선택 상태로 최종 동기화 (미리보기 잔상 제거)
+        foreach (var (transform, entity) in SystemAPI.Query<RefRO<LocalTransform>>().WithAll<UnitComponent>().WithEntityAccess())
+        {
+            bool selected = state.EntityManager.IsComponentEnabled<SelectComponent>(entity);
+            state.EntityManager.SetComponentData(entity, new URPMaterialPropertyBaseColor
             {
-                // Y축 뒤집는 연산 제거하고 Input.mousePosition 기준(Bottom-Up)으로 통일
-                Rect rect = GetScreenRect(startScreenPos, endScreenPos);
-
-                foreach (var (transform, entity) in SystemAPI.Query<RefRO<LocalTransform>>().WithAll<UnitComponent>().WithEntityAccess())
-                {
-                    Vector3 screenPos = cam.WorldToScreenPoint(transform.ValueRO.Position);
-                    
-                    // 1. screenPos.z > 0 : 카메라 뒤에 있는 유닛 제외
-                    // 2. rect.Contains : 화면 좌표계 기준으로 박스 내부에 있는지 확인
-                    if (screenPos.z > 0 && rect.Contains(new Vector2(screenPos.x, screenPos.y)))
-                    {
-                        state.EntityManager.SetComponentEnabled<SelectComponent>(entity, true);
-
-                        state.EntityManager.SetComponentData(entity, new URPMaterialPropertyBaseColor
-                        {
-                            Value = new Unity.Mathematics.float4 (1,0,0,1)
-                        });
-                    }
-                }
-            }
+                Value = selected ? new float4(1, 0, 0, 1) : new float4(1, 1, 1, 1)
+            });
         }
     }
 
@@ -101,8 +136,6 @@ partial struct SelectSystem : ISystem
         float maxX = Mathf.Max(p1.x, p2.x);
         float minY = Mathf.Min(p1.y, p2.y);
         float maxY = Mathf.Max(p1.y, p2.y);
-        
-        // Bottom-Up 기준으로 Rect 생성 (Unity 화면 좌표계와 일치)
         return new Rect(minX, minY, maxX - minX, maxY - minY);
     }
 }

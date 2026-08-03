@@ -14,4 +14,17 @@ public struct UnitEnumComponent : IComponentData , IEquatable<UnitEnumComponent>
     {
         return type == other.type;
     }
+
+    public override int GetHashCode()
+    {
+        return (int)type;
+    }
+}
+
+
+public struct UnitIntilizeTag : IComponentData , IEnableableComponent {}
+public struct CUnitPrefab : IComponentData
+{
+    public Entity Ally;
+    public Entity Enmy;
 }

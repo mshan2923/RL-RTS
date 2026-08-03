@@ -16,7 +16,8 @@ MonoBehaviour:
   - unitType: 0
     Pure:
     - rid: 6739817709566951497
-    - rid: 6739817795490414662
+    - rid: 6739817799833354310
+    - rid: 6739817869879017473
   - unitType: 1
     Pure:
     - rid: 6739817715020070982
@@ -35,12 +36,15 @@ MonoBehaviour:
       type: {class: BaseMovement, ns: , asm: Assembly-CSharp}
       data:
         moveSpeed: 5
-        MoveRadius: 10
+        MoveRadius: 1
     - rid: 6739817715020070983
       type: {class: BaseMovement, ns: , asm: Assembly-CSharp}
       data:
         moveSpeed: 5
-        MoveRadius: 10
-    - rid: 6739817795490414662
-      type: {class: TestInfer, ns: , asm: Assembly-CSharp}
+        MoveRadius: 1
+    - rid: 6739817799833354310
+      type: {class: MoveTo, ns: , asm: Assembly-CSharp}
+      data: 
+    - rid: 6739817869879017473
+      type: {class: StopCommand, ns: , asm: Assembly-CSharp}
       data: 

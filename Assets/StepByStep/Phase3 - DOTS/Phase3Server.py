@@ -17,8 +17,7 @@ import torch
 # =========================================================================
 class RLConfig:
     # 유니티 C# 구조체와 매핑될 바이트 포맷 (<: 리틀엔디안, i: int, f: float)
-    # 현재 구조: unit_id(int), dx(float), dy(float), d0 ~ d5(float), reward(float), done(int)
-    OBS_FORMAT = "<i9fi"
+    OBS_FORMAT = "<i4fii"  # unit_id, dx, dy, self_hp, target_hp, alive, done
     OBS_SIZE = struct.calcsize(OBS_FORMAT)
     
     # 유니티로 보낼 액션 바이트 포맷

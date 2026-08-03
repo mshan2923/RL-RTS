@@ -192,11 +192,11 @@ RectTransform:
   - {fileID: 1709070394}
   m_Father: {fileID: 1706513858}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 1, y: 0}
-  m_AnchorMax: {x: 1, y: 0}
-  m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 171.24268, y: 200}
-  m_Pivot: {x: 1, y: 0}
+  m_AnchorMin: {x: 0.5, y: 0.5}
+  m_AnchorMax: {x: 0.5, y: 0.5}
+  m_AnchoredPosition: {x: 336.57867, y: -209.70001}
+  m_SizeDelta: {x: 171.2427, y: 200}
+  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &614215462
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -443,7 +443,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 983301018}
   m_Direction: 0
   m_Value: 0
-  m_Size: 1
+  m_Size: 0.9999998
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -748,7 +748,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: 0, y: 0.0030539657}
+  m_AnchoredPosition: {x: 0, y: 0.0009573945}
   m_SizeDelta: {x: 0, y: 150}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &1198197708
@@ -849,8 +849,8 @@ MonoBehaviour:
     DetectDistance: 5
     AttackTendency: 0.5
   unitSize: 0.25
-  Size: {x: 10, y: 10}
-  RandomOffset: 5
+  Size: {x: 20, y: 20}
+  RandomOffset: 1
 --- !u!114 &1199436526
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1152,7 +1152,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1780066667}
   m_Direction: 2
   m_Value: 0
-  m_Size: 0.9999829
+  m_Size: 0.9999938
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:

@@ -32,7 +32,7 @@ using System.Threading;
 using UnityEngine;
 using Unity.InferenceEngine;
 
-public class RLManager : MonoBehaviour
+public class SimpleRLAgent : MonoBehaviour
 {
     // ── Inspector ────────────────────────────────────────────────
     [Header("프리팹")]

@@ -3,7 +3,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 public struct UnitComponent : IComponentData
 {
-    public int Id; // 서버와 통신할 때 쓸 고유 번호
+    [System.Obsolete] public int Id; // 서버와 통신할 때 쓸 고유 번호 , 쓸모가 있나?
 }
 public struct MoveTargetComponent : IComponentData
 {

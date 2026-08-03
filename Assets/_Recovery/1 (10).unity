@@ -204,7 +204,6 @@ GameObject:
   - component: {fileID: 1255320369}
   - component: {fileID: 1255320371}
   - component: {fileID: 1255320372}
-  - component: {fileID: 1255320373}
   m_Layer: 0
   m_Name: Manager
   m_TagString: Untagged
@@ -282,20 +281,6 @@ MonoBehaviour:
   m_IncrementalStaticBroadphase: 0
   m_MaxDynamicDepenetrationVelocity: 3
   m_MaxStaticDepenetrationVelocity: Infinity
---- !u!114 &1255320373
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1255320368}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 61107d990e3074f41a15e0ed612f4931, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::RLManagerResoner
-  AllyUnit: {fileID: 1713528423606288365, guid: 3118462217cd2ed42986e4b30990623d, type: 3}
-  EnmyUnit: {fileID: 1713528423606288365, guid: 3118462217cd2ed42986e4b30990623d, type: 3}
 --- !u!1001 &1751455066
 PrefabInstance:
   m_ObjectHideFlags: 0

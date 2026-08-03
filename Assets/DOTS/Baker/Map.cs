@@ -6,7 +6,7 @@ class Map : MonoBehaviour
     public GameObject HexPrefab;
     public int Width;
     public int Height;
-    public float Radius = 1f;
+    //Radius -> HexMetrics.outterRadius 으로 대체
 }
 
 class MapBaker : Baker<Map>
@@ -19,7 +19,6 @@ class MapBaker : Baker<Map>
             Width = authoring.Width,
             Height = authoring.Height,
             HexPrefab = GetEntity(authoring.HexPrefab, TransformUsageFlags.Dynamic),
-            Radius = authoring.Radius
         });
 
 

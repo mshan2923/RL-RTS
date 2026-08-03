@@ -29,67 +29,28 @@ public class BaseMovement : UnitEnumInterface
 
     public string GetLabel(UnitActionContext ctx)
     {
-        return $"{ctx.unitEnum} Move";
+        return $"{ctx.unitEnum} Test Move";
     }
 
-    private async void MoveUnitsAsync(Entity[] targets)
+    private void MoveUnitsAsync(Entity[] targets)
     {
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
 
-        // 각 유닛별 목표 지점 계산 (랜덤 이동 테스트)
-        Dictionary<Entity, float3> targetPositions = new Dictionary<Entity, float3>();
         foreach (var entity in targets)
         {
-            if (em.Exists(entity) && em.HasComponent<LocalTransform>(entity))
-            {
-                var tr = em.GetComponentData<LocalTransform>(entity);
-                float3 targetPos = tr.Position + new float3(UnityEngine.Random.Range(-MoveRadius, MoveRadius), 0, UnityEngine.Random.Range(-MoveRadius, MoveRadius));
-                targetPositions[entity] = targetPos;
-            }
+            if (!em.Exists(entity) || !em.HasComponent<LocalTransform>(entity)) continue;
+            if (!em.HasComponent<MoveTargetComponent>(entity)) continue;
+
+            var tr = em.GetComponentData<LocalTransform>(entity);
+            float3 targetPos = tr.Position + new float3(
+                UnityEngine.Random.Range(-MoveRadius, MoveRadius), 0,
+                UnityEngine.Random.Range(-MoveRadius, MoveRadius));
+
+            var moveTarget = em.GetComponentData<MoveTargetComponent>(entity);
+            moveTarget.MoveTo = targetPos;
+            em.SetComponentData(entity, moveTarget);
         }
 
-        // Awaitable 기반 비동기 프레임 루프
-        bool isMoving = true;
-        while (isMoving)
-        {
-            isMoving = false;
-            float dt = Time.deltaTime;
-
-            foreach (var entity in targets)
-            {
-                if (!em.Exists(entity) || !em.HasComponent<LocalTransform>(entity)) continue;
-
-                var transform = em.GetComponentData<LocalTransform>(entity);
-                bool hasMoveTarget = em.HasComponent<MoveTargetComponent>(entity);
-                
-                float3 currentPos = transform.Position;
-                float3 targetPos = targetPositions[entity];
-
-                float3 dir = targetPos - currentPos;
-                dir.y = 0;
-                float dist = math.length(dir);
-
-                if (dist > math.max(0.1f, moveSpeed * dt))
-                {
-                    isMoving = true;
-                    dir = math.normalize(dir);
-                    transform.Position += dir * moveSpeed * dt;
-
-                    em.SetComponentData(entity, transform);
-
-                    if (hasMoveTarget)
-                    {
-                        var moveTarget = em.GetComponentData<MoveTargetComponent>(entity);
-                        moveTarget.MoveTo = transform.Position;
-                        em.SetComponentData(entity, moveTarget);
-                    }
-                }
-            }
-
-            if (!isMoving) break;
-            await Awaitable.NextFrameAsync();
-        }
-
-        Debug.Log("Move Execution Finished");
+        // 실제 이동은 MoveToTarget ISystem이 전담 — 여기선 목표만 지정하고 끝
     }
 }

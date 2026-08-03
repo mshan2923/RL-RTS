@@ -28,6 +28,7 @@ public class SelectButtonSpawner : MonoBehaviour
     Vector3 mousePos;
 
 
+
     async void Start()
     {
         key = new ();
@@ -39,20 +40,26 @@ public class SelectButtonSpawner : MonoBehaviour
 
     public void Initilize(UnitEnum unitEnum, Entity[] unitArray, List<UnitEnumInterface> actions)
     {
-        if (unitArray.Length == 0 && !EventSystem.current.IsPointerOverGameObject())//Vector3.SqrMagnitude(Input.mousePosition - mousePos) > 1
+        if (unitArray.Length == 0 )//&& !EventSystem.current.IsPointerOverGameObject()
         {
             DestroySlotsFor(unitEnum);
             return;
         }
 
-        if (!key.Contains(unitEnum) && unitArray.Length > 0)
+        if (unitArray.Length == 0) return;
+
+        var ctx = new UnitActionContext { unitEnum = unitEnum, Entities = unitArray };
+
+        if (!key.Contains(unitEnum))
         {
             key.Add(unitEnum);
-            var ctx = new UnitActionContext { unitEnum = unitEnum, Entities = unitArray };
-            CreateSlotFor(unitEnum, actions, ctx);
+            CreateSlotFor(unitEnum, actions, ctx); // 슬롯은 새로 생성
+        }
+        else
+        {
+            UpdateCtxFor(unitEnum, ctx); // 이미 있으면 기존 슬롯들의 ctx만 갱신
         }
     }
-
     public void DestroySlotsFor(UnitEnum unitEnum)
     {
         if (!key.Remove(unitEnum)) return; // 이미 없으면 할 일 없음
@@ -65,11 +72,9 @@ public class SelectButtonSpawner : MonoBehaviour
         }
     }
 
-    public async void UpdateUI(int selectAll, bool isStart)
+    public async void UpdateUI(int selectAll)
     {
 
-        if (isStart)
-            mousePos = Input.mousePosition;
 
 
         selectAmount = selectAll;
@@ -109,6 +114,17 @@ public class SelectButtonSpawner : MonoBehaviour
         }
     }
 
+    private void UpdateCtxFor(UnitEnum unitEnum, UnitActionContext ctx)
+    {
+        for (int i = 0; i < ContentRect.childCount; i++)
+        {
+            var child = ContentRect.GetChild(i);
+            if (child.TryGetComponent<SelectButtonClicker>(out var c) && c.unitEnum == unitEnum)
+            {
+                c.UpdateContext(ctx); // SelectButtonClicker에 이 메서드 추가 필요
+            }
+        }
+    }
 
     async Task LateStartTask(int amount, CancellationToken token)
     {

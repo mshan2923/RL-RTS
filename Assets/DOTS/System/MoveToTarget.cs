@@ -17,7 +17,7 @@ partial struct MoveToTarget : ISystem
     public void OnUpdate(ref SystemState state)
     {
         
-        var moveLength = 50f * MapConfig.FixedStepSize;
+        var moveLength = 1f * MapConfig.FixedStepSize;
 
         var data = state.World.GetExistingSystemManaged<ObstacleSystem>().data.AsReadOnly();
 
@@ -38,13 +38,14 @@ partial struct MoveToTarget : ISystem
             var offset = HexMetrics.WorldToOffset(nextPos);
             bool isBlocked = false;
 
-            if (data.TryGetValue(offset, out var tile))
-            {
-                if (tile.OwnerID == GroupType.Wall)
+            if (data.IsCreated)
+                if (data.TryGetValue(offset, out var tile))
                 {
-                    isBlocked = true;
+                    if (tile.OwnerID == GroupType.Wall)
+                    {
+                        isBlocked = true;
+                    }
                 }
-            }
 
             // 4. 벽이 아니면 이동
             if (!isBlocked)

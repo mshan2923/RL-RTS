@@ -12,9 +12,6 @@ public partial class MapSpawnerSystem : SystemBase
         if (!SystemAPI.TryGetSingleton<MapConfig>(out var config)) return;
 
 
-        float horizontalDistance = config.Radius * math.sqrt(3f);
-        float verticalDistance = config.Radius * 1.5f;
-
         var ecb = SystemAPI.GetSingleton<BeginInitializationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(World.Unmanaged);
 
         for (int x = 0; x < config.Width; x++)
@@ -23,8 +20,6 @@ public partial class MapSpawnerSystem : SystemBase
             {
                 var tile = ecb.Instantiate(config.HexPrefab);
 
-                float xPos = x * horizontalDistance + (z % 2 == 1 ? horizontalDistance * 0.5f : 0f);
-                float zPos = z * verticalDistance;
 
                 var pos = HexMetrics.OffsetToWorld(new int2(x, z)) - new float3(0, 0.5f, 0);
 

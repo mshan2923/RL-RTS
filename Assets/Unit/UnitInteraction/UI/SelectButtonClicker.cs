@@ -33,4 +33,11 @@ public class SelectButtonClicker : MonoBehaviour, Ikill
         if (this.unitEnum == unitEnum)
             GameObject.Destroy(gameObject);
     }
+
+    public void UpdateContext(UnitActionContext ctx)
+{
+    this.context = ctx;
+    button.interactable = action.CanExecute(ctx);
+    button.GetComponentInChildren<TMP_Text>().text = action.GetLabel(ctx);
+}
 }

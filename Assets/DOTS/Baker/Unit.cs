@@ -5,6 +5,9 @@ using UnityEngine;
 class Unit : MonoBehaviour
 {
         public int Id;
+        public float Health = 10f;
+        public float Damage = 1f;
+        public float FireRate = 1f;
 }
 
 class UnitBaker : Baker<Unit>
@@ -25,5 +28,16 @@ class UnitBaker : Baker<Unit>
         {
             Value = new Unity.Mathematics.float4(1,1,1,1)
         });
+        AddComponent(entity, new CHealth
+        {
+            Current = authoring.Health,
+            Max = authoring.Health
+        });
+        AddComponent(entity, new CDamage
+        {
+            Damage = authoring.Damage,
+            FireRate = authoring.FireRate
+        });
+        AddComponent<UnitRespawnTag>(entity);
     }
 }
