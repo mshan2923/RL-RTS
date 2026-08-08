@@ -26,7 +26,15 @@ namespace RL_StepByStep
             packetPerAgentSize = 4 + actionSize; 
 
             socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            socket.Connect(ip, port);
+                
+            try
+            {
+                socket.Connect(ip, port);
+            }catch (SocketException e)
+            {
+                Debug.LogWarning(e);
+            }
+
             socket.NoDelay = true; 
         }
 

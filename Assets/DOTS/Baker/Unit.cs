@@ -39,5 +39,17 @@ class UnitBaker : Baker<Unit>
             FireRate = authoring.FireRate
         });
         AddComponent<UnitRespawnTag>(entity);
+        AddComponent<CNearTarget>(entity);
+
+
+        AddComponent<CWeaponCooldown>(entity);
+        var buffer = AddBuffer<CActionCooldown>(entity);
+        AddComponent<CanToAttackTag>(entity);
+        SetComponentEnabled<CanToAttackTag>(entity, false);
+
+        AddComponent<ReadyToShotTag>(entity);
+        SetComponentEnabled<ReadyToShotTag>(entity, false);
+        AddComponent<ReadyToActionTag>(entity);
+        SetComponentEnabled<ReadyToActionTag>(entity, false);
     }
 }

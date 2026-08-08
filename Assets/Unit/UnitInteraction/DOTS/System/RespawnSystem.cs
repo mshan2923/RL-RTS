@@ -6,48 +6,74 @@ using Unity.Transforms;
 
 partial struct RespawnSystem : ISystem
 {
-    EntityQuery respawnQuery;
+    EntityQuery respawnParamQuery;
+    Random random;
+
     [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
         using var build = new EntityQueryBuilder(Allocator.Temp);
         build.WithAll<RLParmCompoenent>();
-        respawnQuery = build.Build(ref state);
+        respawnParamQuery = build.Build(ref state);
+
+        random = new Random((uint)System.DateTime.Now.Ticks); // 최초 1회만 시드 생성
     }
 
     [BurstCompile]
     public void OnUpdate(ref SystemState state)
     {
-
-        uint seed = (uint)System.Guid.NewGuid().GetHashCode();
-        var random = new Random(seed);
-
-        using var unitParamArray = respawnQuery.ToComponentDataArray<RLParmCompoenent>(Allocator.TempJob);
-
-        foreach(var rLParm in unitParamArray)
+        // 팀별 스폰 파라미터를 맵으로 미리 구성
+        var paramMap = new NativeHashMap<UnitEnumComponent, RLParmCompoenent>(4, Allocator.TempJob);
+        using (var paramArray = respawnParamQuery.ToComponentDataArray<RLParmCompoenent>(Allocator.Temp))
         {
-            var size = new float3(rLParm.Width, 0 , rLParm.Height);
-            var offset = new float3(rLParm.SpawnRandomOffset, 0 , rLParm.SpawnRandomOffset);
-
-            var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(state.WorldUnmanaged);
-
-            foreach(var (_, transform, moveTo, entity) in SystemAPI.Query<RefRO<UnitRespawnTag>, RefRW<LocalTransform >, RefRW<MoveTargetComponent>>().WithEntityAccess())
-            {
-                    var pos = random.NextFloat3(-size + offset, size - offset) + size * 0.5f;
-
-                    transform.ValueRW.Position = pos;
-                    moveTo.ValueRW.MoveTo = pos;
-
-                    ecb.SetComponentEnabled<UnitRespawnTag>(entity, false);
-            }
+            foreach (var p in paramArray)
+                paramMap.TryAdd(new UnitEnumComponent{ type = p.TeamType }, p); 
         }
 
+        var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>()
+            .CreateCommandBuffer(state.WorldUnmanaged).AsParallelWriter();
 
+        var job = new RespawnJob
+        {
+            paramMap = paramMap,
+            random = random,
+            ecb = ecb
+        };
+
+        state.Dependency = job.Schedule(state.Dependency); // Random 상태 갱신 때문에 병렬화 안 함
+        paramMap.Dispose(state.Dependency);
+
+        // 다음 프레임을 위해 랜덤 상태 진행 (job 안에서 값 복사로 쓰였으니 여기서 한 번 더 굴려줌)
+        random.NextUInt();
     }
 
     [BurstCompile]
-    public void OnDestroy(ref SystemState state)
+    public void OnDestroy(ref SystemState state) { }
+
+    [BurstCompile]
+    [WithAll(typeof(UnitRespawnTag))]
+    public partial struct RespawnJob : IJobEntity
     {
-        
+        [ReadOnly] public NativeHashMap<UnitEnumComponent, RLParmCompoenent> paramMap;
+        public Random random;
+        public EntityCommandBuffer.ParallelWriter ecb;
+
+        public void Execute([EntityIndexInQuery] int index, Entity entity,
+            ref LocalTransform transform, ref MoveTargetComponent moveTo, in UnitEnumComponent team, in UnitRespawnTag tag)
+        {
+            if (!paramMap.TryGetValue(team, out var rLParm)) return;
+
+            var size = new float3(rLParm.Width, 0, rLParm.Height);
+            var offset = new float3(rLParm.SpawnRandomOffset, 0, rLParm.SpawnRandomOffset);
+
+            // 병렬 job에서 안전한 랜덤: index로 섞어서 엔티티마다 다른 결과 보장
+            var localRandom = Random.CreateFromIndex((uint)(random.NextUInt() + index));
+            var pos = localRandom.NextFloat3(-size + offset, size - offset) + size * 0.5f;
+
+            transform.Position = pos;
+            moveTo.MoveTo = pos;
+
+            ecb.SetComponentEnabled<UnitRespawnTag>(index, entity, false);
+        }
     }
 }

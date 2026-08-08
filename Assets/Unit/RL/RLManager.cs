@@ -48,12 +48,11 @@ public class RLManager : MonoBehaviour
 
     void SpawnUnits(EntityManager em, UnitData data, int amount, UnitEnum teamType, ref int nextId)
     {
-        var offset = new Vector3(Size.x, 0, Size.y) * 0.5f;
-
             var entity = em.CreateEntity();
             em.AddComponentData(entity, new RLParmCompoenent
             {
                 Amount = amount,
+                TeamType = teamType,
                 Width = Size.x,
                 Height = Size.y,
                 SpawnRandomOffset = RandomOffset
@@ -67,10 +66,6 @@ public class RLManager : MonoBehaviour
                 DetectDistance = data.DetectDistance,
                 AttackTendency = data.AttackTendency
             });
-            var randomPos = new Vector3(
-                UnityEngine.Random.Range(-1,1) * Size.x + RandomOffset,
-                 0, 
-                UnityEngine.Random.Range(-1,1) * Size.y - RandomOffset);
 
     }
 }

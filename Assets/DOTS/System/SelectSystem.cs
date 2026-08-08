@@ -62,9 +62,11 @@ partial struct SelectSystem : ISystem
             return;
         }
 
+        if (!isDragging) return;
+
         Debug.Log("isDragging");
 
-        if (!isDragging) return;
+
 
         Camera cam = Camera.main;
         if (cam == null) return;
@@ -74,7 +76,6 @@ partial struct SelectSystem : ISystem
         // 드래그 중: 실제 선택 상태는 그대로 두고, 색상만 미리보기로 갱신
         foreach (var (transform, entity) in SystemAPI.Query<RefRO<LocalTransform>>().WithAll<UnitComponent>().WithEntityAccess())
         {
-            Debug.Log("--");
             Vector3 screenPos = cam.WorldToScreenPoint(transform.ValueRO.Position);
             bool isInside = screenPos.z > 0 && rect.Contains(new Vector2(screenPos.x, screenPos.y));
             bool alreadySelected = state.EntityManager.IsComponentEnabled<SelectComponent>(entity);

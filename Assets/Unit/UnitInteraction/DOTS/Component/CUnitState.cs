@@ -1,7 +1,7 @@
 using Unity.Collections;
 using Unity.Entities;
 
-public enum UnitState
+public enum UnitState : int
 {
     None, Move, Stop , Attack , Action
 }

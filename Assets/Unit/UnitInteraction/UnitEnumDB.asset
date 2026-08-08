@@ -21,12 +21,20 @@ MonoBehaviour:
   - unitType: 1
     Pure:
     - rid: 6739817715020070982
+    - rid: 3015483395165913158
   - unitType: 2
     Pure:
     - rid: 6739817715020070983
+    - rid: 3015483395165913159
   references:
     version: 2
     RefIds:
+    - rid: 3015483395165913158
+      type: {class: MoveTo, ns: , asm: Assembly-CSharp}
+      data: 
+    - rid: 3015483395165913159
+      type: {class: MoveTo, ns: , asm: Assembly-CSharp}
+      data: 
     - rid: 6739817709566951497
       type: {class: BaseMovement, ns: , asm: Assembly-CSharp}
       data:

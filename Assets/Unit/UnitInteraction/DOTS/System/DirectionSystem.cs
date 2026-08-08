@@ -58,7 +58,7 @@ partial struct DirectionSystem : ISystem
                     if (result)
                     {
                         response.ValueRW.entity = hit.Entity;
-                        response.ValueRW.TargetPos = hit.Position;
+                        response.ValueRW.TargetPos = new Unity.Mathematics.float3(hit.Position.x, 0, hit.Position.z);
                     }
                 }
                 else
@@ -66,8 +66,9 @@ partial struct DirectionSystem : ISystem
                     //? 이것도 raycast할까? 
                     if (lookup.HasComponent(request.ValueRO.entity))
                     {
+                        var pos = lookup[request.ValueRO.entity].Position;
                         response.ValueRW.entity = request.ValueRO.entity;
-                        response.ValueRW.TargetPos = lookup[request.ValueRO.entity].Position;
+                        response.ValueRW.TargetPos = new Unity.Mathematics.float3(pos.x, 0, pos.z);
                     }
                 }
 
