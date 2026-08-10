@@ -30,6 +30,7 @@ class UnitBaker : Baker<Unit>
         });
         AddComponent(entity, new CHealth
         {
+            Prev = authoring.Health,
             Current = authoring.Health,
             Max = authoring.Health
         });

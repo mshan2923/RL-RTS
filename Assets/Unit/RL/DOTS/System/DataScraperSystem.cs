@@ -97,7 +97,7 @@ partial struct DataScraperSystem : ISystem
             if (TargetUnitEnum != unitEnum.type) return;
 
             using var entities = new NativeList<Entity>(Allocator.Temp);
-            SpatialGridSystem.FindNearby(spatialGrid, transform.Position, SearchRadius, entities);
+            SpatialGridSystem.FindNearby(spatialGrid, transform.Position, SearchRadius, entities, entity);
 
             var data = new RLParm();
 

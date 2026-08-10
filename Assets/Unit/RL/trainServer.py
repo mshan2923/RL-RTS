@@ -11,13 +11,13 @@ import torch
 
 
 class RLConfig:
-    OBS_FORMAT = "<i4fifi"  # unit_id, dx, dy, selfHp, targetHp, alive, reward, done
+    OBS_FORMAT = "<i4fiifi"  # unit_id, dx, dy, selfHp, targetHp, alive,InAttackRange, reward, done
     OBS_SIZE = struct.calcsize(OBS_FORMAT)
 
     ACTION_FORMAT = "<ii"  # unit_id, action_index
     ACTION_SIZE = struct.calcsize(ACTION_FORMAT)
 
-    OBS_SHAPE = (4,)   # dx, dy, selfHp, targetHp
+    OBS_SHAPE = (5,)   # dx, dy, selfHp, targetHp
     NUM_ACTIONS = 5    # None, Move, Stop, Attack, Action
 
     OBS_LOW, OBS_HIGH = -1.0, 1.0
@@ -25,10 +25,10 @@ class RLConfig:
     @staticmethod
     def unpack_observation(data_bytes, offset):
         raw = struct.unpack(RLConfig.OBS_FORMAT, data_bytes[offset:offset + RLConfig.OBS_SIZE])
-        unit_id, dx, dy, self_hp, target_hp, alive, reward, done = raw
+        unit_id, dx, dy, self_hp, target_hp, alive, in_attack_range, reward, done = raw
         return {
             "unit_id": unit_id,
-            "obs_vector": [dx, dy, self_hp, target_hp],
+            "obs_vector": [dx, dy, self_hp, target_hp, in_attack_range],  # 관측 벡터에도 추가해야 함
             "alive": bool(alive),
             "reward": reward,
             "done": bool(done)

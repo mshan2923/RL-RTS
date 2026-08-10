@@ -35,15 +35,13 @@ public void OnUpdate(ref SystemState state)
                 switch (unitState.ValueRO.unitState)
                 {
                     case UnitState.None:
-                        break;
-                    case UnitState.Move:
+                        // break;
+                    case UnitState.MoveToward:
+                    case UnitState.Retreat:
                         moveto.ValueRW.MoveTo = Target;
                         break;
-                    case UnitState.Stop:
+                    case UnitState.HoldPosition:
                         moveto.ValueRW.MoveTo = trans.ValueRO.Position;
-                        break;
-                    case UnitState.Attack:
-                        moveto.ValueRW.MoveTo = Target;
                         break;
                     case UnitState.Action:
                         moveto.ValueRW.MoveTo = Target;
@@ -60,43 +58,4 @@ public void OnUpdate(ref SystemState state)
         
     }
 
-    [BurstCompile]
-    public partial struct UnitExecute : IJobEntity
-    {
-        public float3 TargetPos;
-        public float Speed;
-        public float deltaTime;
-
-        public void Execute([EntityIndexInQuery]int index, Entity entity, ref CUnitState unitState , in LocalTransform transform, ref MoveTargetComponent move)
-        {
-            // if (math.distancesq(TargetPos , transform.Position) < (Speed * Speed) * (deltaTime * deltaTime))
-            // {
-            //     unitState = new CUnitState { unitState = UnitState.Stop};
-            //     return;
-            // }
-
-            switch (unitState.unitState)
-            {
-                case UnitState.None:
-                    break;
-                case UnitState.Move:
-                    move.MoveTo = TargetPos;//transform.Position + Move(transform);
-                    break;
-                case UnitState.Stop:
-                    break;
-                case UnitState.Attack:
-                    move.MoveTo = transform.Position + Move(transform);
-                    break;
-                case UnitState.Action:
-                    // move.MoveTo = transform.Position + Move(transform);
-                    break;
-            }
-
-        }
-
-        public float3 Move(in LocalTransform transform)
-        {
-            return Speed * deltaTime * math.normalizesafe(TargetPos - transform.Position);
-        }
-    }
 }

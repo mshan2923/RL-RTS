@@ -1,9 +1,10 @@
 using Unity.Collections;
 using Unity.Entities;
 
+
 public enum UnitState : int
 {
-    None, Move, Stop , Attack , Action
+    None, MoveToward, HoldPosition, Retreat, Action
 }
 public struct CUnitState : IComponentData
 {

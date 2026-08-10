@@ -37,7 +37,7 @@ public class MoveTo : UnitEnumInterface
             em.SetComponentData(v, new CUnitState
             {
                 Debug = "Pure - MoveTo.cs",
-                unitState = UnitState.Move
+                unitState = UnitState.None
             });
 
             em.SetComponentEnabled<CCommandPending>(v, true);

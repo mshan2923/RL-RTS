@@ -8,6 +8,7 @@ using UnityEngine;
     public int unit_id;
     public float dx, dy, selfHp, targetHp;
     public int alive;
+    public int InAttackRange;
     public float reward;
     public int done;
 }

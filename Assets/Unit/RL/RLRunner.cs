@@ -75,8 +75,8 @@ public class RLRunner : MonoBehaviour
                 var entity = entities[i];
                 var selfPos = transArray[i].Position;
 
-                var targetList = new NativeList<Entity>(Allocator.Temp);
-                SpatialGridSystem.FindNearby(grid, selfPos, rLManager.AllyData.DetectDistance, targetList);
+                // var targetList = new NativeList<Entity>(Allocator.Temp);
+                // SpatialGridSystem.FindNearby(grid, selfPos, rLManager.AllyData.DetectDistance, targetList, entity);
 
                 CObservation obs;
 
@@ -90,6 +90,7 @@ public class RLRunner : MonoBehaviour
                         dy = 0f,
                         selfHp = healthArray[i].Current / healthArray[i].Max,
                         targetHp = 0f,
+                        InAttackRange = 0,
                         alive = em.IsEnabled(entity) ? 1 : 0,
                         reward = 0f,
                         done = 0
@@ -100,6 +101,9 @@ public class RLRunner : MonoBehaviour
                     var targetPos = em.GetComponentData<LocalTransform>(closest).Position;
                     var targetHealth = em.GetComponentData<CHealth>(closest);
 
+                    float actualDist = math.length(targetPos - selfPos);
+                    bool isOutOfPerception = actualDist > rLManager.AllyData.DetectDistance;
+
                     var dxy = (targetPos - selfPos) / rLManager.AllyData.DetectDistance;
 
                     obs = new CObservation
@@ -107,17 +111,18 @@ public class RLRunner : MonoBehaviour
                         unit_id = i,
                         dx = Mathf.Clamp(dxy.x, -1f, 1f),
                         dy = Mathf.Clamp(dxy.z, -1f, 1f),
-                        selfHp = healthArray[i].Current / healthArray[i].Max,
-                        targetHp = targetHealth.Current / targetHealth.Max,
+                        selfHp = (healthArray[i].Prev - healthArray[i].Current) / healthArray[i].Max,
+                        targetHp = (targetHealth.Prev - targetHealth.Current) / targetHealth.Max,
+                        InAttackRange = math.length(targetPos - selfPos) < rLManager.AllyData.AttackDistance ? 1 : 0,
                         alive = em.IsEnabled(entity) ? 1 : 0,
-                        reward = 0f,//Todo 행동 적절성
+                        reward = 0f,
                         done = 0
                     };
-                    obs = Reward(obs);
+                    obs = isOutOfPerception ? ZeroReward(obs) : Reward(obs);
                 }
 
                 obsArray[i] = obs;
-                targetList.Dispose();
+                // targetList.Dispose();
             }
 
             entities.Dispose();
@@ -156,13 +161,17 @@ public class RLRunner : MonoBehaviour
         float distance = math.length(new float2(parm.dx, parm.dy)); // dx=x축, dy=z축 성분 (필드 이름이 dy지만 실제론 z)
         float score = (1f - distance) * 5f;
         
-        score += parm.selfHp * 10f;
-        // score += parm.targetHp * -10f;
+        score -= parm.selfHp * 10f;
+        score += parm.targetHp * 10f;
         score += (1 - parm.alive) * -50f;
         score += parm.alive * 1f;
 
-        //변화량에 따른 결과로 만들기
         parm.reward = score;
+        return parm;
+    }
+    CObservation ZeroReward(CObservation parm)
+    {
+        parm.reward = 0;
         return parm;
     }
 

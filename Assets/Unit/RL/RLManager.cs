@@ -27,6 +27,7 @@ public class RLManager : MonoBehaviour
         public float FireRate ;
         public float Health;
         public float DetectDistance;
+        public float AttackDistance;
         /// <summary>
         /// 공격 성향
         /// </summary>
@@ -58,12 +59,18 @@ public class RLManager : MonoBehaviour
                 SpawnRandomOffset = RandomOffset
             });
             em.AddComponentData(entity, new UnitEnumComponent { type = teamType });
-            em.AddComponentData(entity, new CHealth { Current = data.Health, Max = data.Health });
+            em.AddComponentData(entity, new CHealth 
+            {
+                Prev = data.Health,
+                 Current = data.Health,
+                  Max = data.Health 
+            });
             em.AddComponentData(entity, new CUnitParams
             {
                 Damage = data.Damager,
                 FireRate = data.FireRate,
                 DetectDistance = data.DetectDistance,
+                AttackDistance = data.AttackDistance,
                 AttackTendency = data.AttackTendency
             });
 

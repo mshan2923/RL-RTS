@@ -32,7 +32,7 @@ public class StopCommand : UnitEnumInterface
             em.SetComponentData(v, new CUnitState
             {
                 Debug = "Pure - StopCommand.cs",
-                unitState = UnitState.Stop
+                unitState = UnitState.HoldPosition
             });
 
             em.SetComponentEnabled<CCommandPending>(v, true);

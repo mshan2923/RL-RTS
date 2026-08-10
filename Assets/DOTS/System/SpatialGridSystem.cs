@@ -10,9 +10,8 @@ using UnityEngine;
 public partial class SpatialGridSystem : SystemBase
 {
     public NativeParallelMultiHashMap<int2, Entity> Grid;
-    [System.Obsolete]public NativeParallelHashMap<Entity, Entity> NearTarget;
+
     public EntityQuery unitParmQuery;
-    public JobHandle handle;
 
     protected override void OnCreate()
     {
@@ -28,38 +27,35 @@ public partial class SpatialGridSystem : SystemBase
     }
 
     [BurstCompile]
-    protected override void OnUpdate()
+protected override void OnUpdate()
+{
+    Grid.Clear();
+
+    var unitParamMap = new NativeHashMap<UnitEnumComponent, CUnitParams>(4, Allocator.TempJob);
+    DOTS_Mecro.GetUnitParm(unitParmQuery, ref unitParamMap);
+
+    // 팀별 전체 엔티티 목록 (랜덤 타겟 폴백용)
+    var allyEntities = DOTS_Mecro.GetTeamEntities(EntityManager, UnitEnum.Ally, Allocator.TempJob);
+    var enemyEntities = DOTS_Mecro.GetTeamEntities(EntityManager, UnitEnum.Enmy, Allocator.TempJob);
+
+    Dependency = new AddJob { Grid = Grid.AsParallelWriter() }.ScheduleParallel(Dependency);
+    Dependency.Complete();
+
+    Dependency = new FindJob
     {
-        /*
-        ! 셀 단위로 한 번만 계산해서 공유: "이 셀 반경 안에 뭐가 있는지"를 유닛별이 아니라 셀별로 캐싱하면, 같은 셀에 있는 유닛들이 계산을 공유할 수 있음
-        ! DetectDistance를 매 프레임 다시 계산하지 않고, 몇 프레임에 한 번씩만 갱신 (타겟이 매 프레임 급격히 안 바뀌는 게임 특성상 충분할 수 있음)
-        */
+        Grid = Grid.AsReadOnly(),
+        transLookup = SystemAPI.GetComponentLookup<LocalTransform>(true),
+        TeamLookup = SystemAPI.GetComponentLookup<UnitEnumComponent>(true),
+        parmMap = unitParamMap.AsReadOnly(),
+        AllyEntities = allyEntities,
+        EnemyEntities = enemyEntities,
+        RandomSeed = (uint)UnityEngine.Time.frameCount + 1 // 0 방지
+    }.ScheduleParallel(Dependency);
 
-        Grid.Clear();
-
-        var unitParamMap = new NativeHashMap<UnitEnumComponent, CUnitParams>(4, Allocator.TempJob);
-
-        var unitParm = DOTS_Mecro.GetUnitParm(unitParmQuery, UnitEnum.Ally);
-        DOTS_Mecro.GetUnitParm(unitParmQuery, ref unitParamMap);
-
-        // 1. 그리드 채우기 잡 스케줄
-        Dependency = new AddJob
-        {
-            Grid = Grid.AsParallelWriter()
-        }.ScheduleParallel(Dependency);
-
-        // Dependency.Complete();
-
-        // 2. 타겟 찾기 잡 스케줄 (Dependency 체이닝 필요)
-        Dependency = new FindJob
-        {
-            Grid = Grid.AsReadOnly(),
-            transLookup = SystemAPI.GetComponentLookup<LocalTransform>(true),
-            parmMap = unitParamMap.AsReadOnly()
-        }.ScheduleParallel(Dependency);
-        
-        handle = Dependency;
-    }
+    unitParamMap.Dispose(Dependency);
+    allyEntities.Dispose(Dependency);
+    enemyEntities.Dispose(Dependency);
+}
 
     partial struct AddJob : IJobEntity
     {
@@ -76,23 +72,22 @@ public partial class SpatialGridSystem : SystemBase
     partial struct FindJob : IJobEntity
     {
         [ReadOnly] public NativeParallelMultiHashMap<int2, Entity>.ReadOnly Grid;
-
         [ReadOnly] public ComponentLookup<LocalTransform> transLookup;
-
+        [ReadOnly] public ComponentLookup<UnitEnumComponent> TeamLookup;
         public NativeHashMap<UnitEnumComponent, CUnitParams>.ReadOnly parmMap;
 
-        public void Execute([EntityIndexInQuery]int index, Entity entity, in LocalTransform transform, in UnitComponent unit, in UnitEnumComponent unitEnum, ref CNearTarget nearTarget)
+        [ReadOnly] public NativeArray<Entity> AllyEntities;
+        [ReadOnly] public NativeArray<Entity> EnemyEntities;
+        public uint RandomSeed;
+
+        public void Execute([EntityIndexInQuery] int index, Entity entity, in LocalTransform transform, in UnitComponent unit, in UnitEnumComponent unitEnum, ref CNearTarget nearTarget)
         {
-            // Allocator.Temp를 사용하여 잡 내부에서 안전하게 할당하고 해제
             using var result = new NativeList<Entity>(Allocator.Temp);
-
             parmMap.TryGetValue(unitEnum, out var unitParams);
-
-            FindNearby(Grid, transform.Position, unitParams.DetectDistance, result);
+            FindNearby(Grid, transform.Position, unitParams.DetectDistance, result, entity);
 
             Entity closest = Entity.Null;
             float closestDist = float.MaxValue;
-            
 
             for (int t = 0; t < result.Length; t++)
             {
@@ -102,7 +97,7 @@ public partial class SpatialGridSystem : SystemBase
                 var candidatePos = transLookup.GetRefRO(candidate).ValueRO.Position;
                 float dist = math.distancesq(transform.Position, candidatePos);
 
-                if (dist < closestDist)
+                if (dist < closestDist && unitEnum.type != TeamLookup.GetRefRO(candidate).ValueRO.type)
                 {
                     closestDist = dist;
                     closest = candidate;
@@ -110,9 +105,22 @@ public partial class SpatialGridSystem : SystemBase
             }
 
 
+            if (closest == Entity.Null)
+            {
+                // 인식범위 안에 적이 없음 -> 랜덤 강제 배정
+                var opponents = unitEnum.type == UnitEnum.Ally ? EnemyEntities : AllyEntities;
+
+                if (opponents.Length > 0)
+                {
+                    var rand = new Unity.Mathematics.Random(RandomSeed + (uint)index + 1);
+                    int pick = rand.NextInt(0, opponents.Length);
+                    closest = opponents[pick];
+                }
+            }
+
             nearTarget = new CNearTarget
             {
-                entity = closest
+                entity = closest,
             };
         }
     }
@@ -120,20 +128,18 @@ public partial class SpatialGridSystem : SystemBase
     public static void FindNearby(
         NativeParallelMultiHashMap<int2, Entity>.ReadOnly grid,
         int2 center, int maxRadius,
-        NativeList<Entity> result)
+        NativeList<Entity> result,
+        Entity self) // 자기 자신을 알아야 정확히 판단 가능
     {
         using var visited = new NativeHashSet<Entity>(16, Allocator.Temp);
 
         for (int radius = 0; radius <= maxRadius; radius++)
         {
-            // "정확히 이번 radius인 링"만 훑음 (0~radius 전체 아님)
             for (int q = -radius; q <= radius; q++)
             {
                 int r1 = math.max(-radius, -q - radius);
                 int r2 = math.min(radius, -q + radius);
 
-                // q가 -radius나 +radius 끝(변의 양끝)일 때만 r 전체를 훑고,
-                // 그 외엔 r1, r2(양 끝단)만 훑어서 "테두리"만 남김
                 if (q == -radius || q == radius)
                 {
                     for (int r = r1; r <= r2; r++)
@@ -147,10 +153,15 @@ public partial class SpatialGridSystem : SystemBase
                 }
             }
 
-            if (result.Length > 0) return;
+            // 자기 자신 말고 "진짜 다른 엔티티"가 있어야 멈춤
+            bool hasOther = false;
+            for (int i = 0; i < result.Length; i++)
+            {
+                if (result[i] != self) { hasOther = true; break; }
+            }
+            if (hasOther) return;
         }
     }
-
     private static void TryAdd(
         NativeParallelMultiHashMap<int2, Entity>.ReadOnly grid,
         int2 coord, NativeHashSet<Entity> visited, NativeList<Entity> result)
@@ -165,10 +176,10 @@ public partial class SpatialGridSystem : SystemBase
     public static void FindNearby(
         NativeParallelMultiHashMap<int2, Entity>.ReadOnly grid,
         float3 center, float radius,
-        NativeList<Entity> result)
+        NativeList<Entity> result, Entity self)
     {
         var posInt = HexMetrics.WorldToOffset(center);
         int cell = (int)(radius / HexMetrics.outerRadius);
-        FindNearby(grid, posInt, cell, result);
+        FindNearby(grid, posInt, cell, result, self);
     }
 }

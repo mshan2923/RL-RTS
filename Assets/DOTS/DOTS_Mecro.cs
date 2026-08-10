@@ -55,4 +55,23 @@ public static class DOTS_Mecro
 
     }
 
+    public static NativeArray<Entity> GetTeamEntities(EntityManager em, UnitEnum team, Allocator allocator)
+    {
+        var query = em.CreateEntityQuery(typeof(UnitComponent), typeof(UnitEnumComponent));
+        var entities = query.ToEntityArray(Allocator.Temp);
+
+        var list = new NativeList<Entity>(Allocator.Temp);
+        foreach (var e in entities)
+        {
+            var unitEnum = em.GetComponentData<UnitEnumComponent>(e);
+            if (unitEnum.type == team) list.Add(e);
+        }
+
+        var result = new NativeArray<Entity>(list.Length, allocator);
+        NativeArray<Entity>.Copy(list.AsArray(), result);
+        list.Dispose();
+        entities.Dispose();
+        return result;
+    }
+
 }

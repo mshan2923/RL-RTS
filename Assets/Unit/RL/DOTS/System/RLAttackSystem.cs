@@ -90,6 +90,7 @@ partial struct RLAttackSystem : ISystem
             if (near.entity != Entity.Null && hpLookup.HasComponent(near.entity))
             {
                 var targetHp = hpLookup[near.entity];
+                targetHp.Prev = targetHp.Current;
                 targetHp.Current -= unitParm.Damage;
                 ecb.SetComponent(index, near.entity, targetHp);
             }

@@ -56,7 +56,7 @@ partial struct MoveToTarget : ISystem
                 }
             }
 
-            if (!isBlocked)
+            //if (!isBlocked)
             {
                 move.PrevPosition = currentPos;
                 trans.Position = nextPos;
