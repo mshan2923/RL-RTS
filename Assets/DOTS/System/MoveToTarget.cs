@@ -9,10 +9,10 @@ partial struct MoveToTarget : ISystem
     [BurstCompile]
     public void OnCreate(ref SystemState state) { }
 
-    [BurstCompile]
+    // [BurstCompile]
     public void OnUpdate(ref SystemState state)
     {
-        var moveLength = 5f * MapConfig.FixedStepSize;
+        var moveLength = 1f * MapConfig.FixedStepSize;
         var data = state.World.GetExistingSystemManaged<ObstacleSystem>().data.AsReadOnly();
 
         var job = new MoveToTargetJob

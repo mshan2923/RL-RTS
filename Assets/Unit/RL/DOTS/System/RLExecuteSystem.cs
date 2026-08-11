@@ -9,12 +9,12 @@ using UnityEngine;
 [UpdateAfter(typeof(SpatialGridSystem))]
 partial struct RLExecuteSystem : ISystem
 {
-    EntityQuery unitQuery;
+    // EntityQuery unitQuery;
     EntityQuery unitParmQuery;
     [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
-        unitQuery = BuildQuery(ref state);
+        // unitQuery = BuildQuery(ref state);
         unitParmQuery = DOTS_Mecro.UnitParmQuery(ref state);
     }
 

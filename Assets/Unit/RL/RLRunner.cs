@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using RL_StepByStep;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.InferenceEngine;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
@@ -9,176 +10,129 @@ using UnityEngine;
 public class RLRunner : MonoBehaviour
 {
     public RLManager rLManager;
-    PythonTrainingPolicy<CObservation, CActionData> policy;
-    EntityQuery unitQuery;
+    public ModelAsset model;
+    public RunMode mode; // Training / Inference
 
+    PythonTrainingPolicy<CObservation, CActionData> trainingPolicy; // Training 전용
+    OnnxInferenceRunner inferenceRunner; // Inference 전용, 기존 InferenceRunner 재사용
+
+    EntityQuery unitQuery;
     NativeArray<CObservation> obsArray;
     NativeArray<CActionData> actionArray;
 
     async void Start()
     {
-        policy = new PythonTrainingPolicy<CObservation, CActionData>("127.0.0.1", 5555);
+        if (mode == RunMode.Training)
+            trainingPolicy = new PythonTrainingPolicy<CObservation, CActionData>("127.0.0.1", 5555);
+        else
+            inferenceRunner = new OnnxInferenceRunner(model); // 예시
+
         unitQuery = BuildQuery();
         await Loop();
-    }
-
-    EntityQuery BuildQuery()
-    {
-        var em = World.DefaultGameObjectInjectionWorld.EntityManager;
-    var build = new EntityQueryBuilder(Allocator.Temp)
-        .WithAll<RLParm, CHealth, CNearTarget, LocalTransform>()
-        .WithOptions(EntityQueryOptions.IncludeDisabledEntities);
-        
-        var query = em.CreateEntityQuery(build);
-        build.Dispose();
-        return query;
     }
 
     private async System.Threading.Tasks.Task Loop()
     {
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
-        var grid = World.DefaultGameObjectInjectionWorld.GetExistingSystemManaged<SpatialGridSystem>().Grid.AsReadOnly();
-        
 
         while (true)
         {
             if (unitQuery.CalculateEntityCount() == 0)
             {
-                Debug.Log("Empty Unit");
-
                 await Awaitable.NextFrameAsync();
                 continue;
             }
 
-
             var entities = unitQuery.ToEntityArray(Allocator.TempJob);
-            var parmArray = unitQuery.ToComponentDataArray<RLParm>(Allocator.TempJob);
             var transArray = unitQuery.ToComponentDataArray<LocalTransform>(Allocator.TempJob);
             var healthArray = unitQuery.ToComponentDataArray<CHealth>(Allocator.TempJob);
             var nearTargetArray = unitQuery.ToComponentDataArray<CNearTarget>(Allocator.TempJob);
 
-            int count = parmArray.Length;
-
-            if (!obsArray.IsCreated || obsArray.Length != count)
-            {
-                if (obsArray.IsCreated) obsArray.Dispose();
-                obsArray = new NativeArray<CObservation>(count, Allocator.Persistent);
-            }
-            if (!actionArray.IsCreated || actionArray.Length != count)
-            {
-                if (actionArray.IsCreated) actionArray.Dispose();
-                actionArray = new NativeArray<CActionData>(count, Allocator.Persistent);
-            }
+            int count = entities.Length;
+            EnsureArrays(count);
 
             for (int i = 0; i < count; i++)
             {
-                var entity = entities[i];
-                var selfPos = transArray[i].Position;
+                var result = ObservationBuilder.Build(
+                    i, entities[i], transArray[i].Position, healthArray[i],
+                    nearTargetArray[i].entity, em,
+                    rLManager.AllyData.DetectDistance, rLManager.AllyData.AttackDistance);
 
-                // var targetList = new NativeList<Entity>(Allocator.Temp);
-                // SpatialGridSystem.FindNearby(grid, selfPos, rLManager.AllyData.DetectDistance, targetList, entity);
+                var obs = result.obs;
 
-                CObservation obs;
-
-                var closest = nearTargetArray[i].entity;
-                if (closest == Entity.Null)
-                {
-                    obs = new CObservation
-                    {
-                        unit_id = i,
-                        dx = 0f,
-                        dy = 0f,
-                        selfHp = healthArray[i].Current / healthArray[i].Max,
-                        targetHp = 0f,
-                        InAttackRange = 0,
-                        alive = em.IsEnabled(entity) ? 1 : 0,
-                        reward = 0f,
-                        done = 0
-                    };
-                }
-                else
-                {
-                    var targetPos = em.GetComponentData<LocalTransform>(closest).Position;
-                    var targetHealth = em.GetComponentData<CHealth>(closest);
-
-                    float actualDist = math.length(targetPos - selfPos);
-                    bool isOutOfPerception = actualDist > rLManager.AllyData.DetectDistance;
-
-                    var dxy = (targetPos - selfPos) / rLManager.AllyData.DetectDistance;
-
-                    obs = new CObservation
-                    {
-                        unit_id = i,
-                        dx = Mathf.Clamp(dxy.x, -1f, 1f),
-                        dy = Mathf.Clamp(dxy.z, -1f, 1f),
-                        selfHp = (healthArray[i].Prev - healthArray[i].Current) / healthArray[i].Max,
-                        targetHp = (targetHealth.Prev - targetHealth.Current) / targetHealth.Max,
-                        InAttackRange = math.length(targetPos - selfPos) < rLManager.AllyData.AttackDistance ? 1 : 0,
-                        alive = em.IsEnabled(entity) ? 1 : 0,
-                        reward = 0f,
-                        done = 0
-                    };
-                    obs = isOutOfPerception ? ZeroReward(obs) : Reward(obs);
-                }
+                if (mode == RunMode.Training)
+                    obs = RewardCalculator.Apply(obs, result.isOutOfPerception, result.attackDistNormalized);
 
                 obsArray[i] = obs;
-                // targetList.Dispose();
             }
 
             entities.Dispose();
-            parmArray.Dispose();
             transArray.Dispose();
             healthArray.Dispose();
             nearTargetArray.Dispose();
 
             if (count > 0)
             {
-                await policy.UpdateTrainingAsync(obsArray, actionArray);
+                if (mode == RunMode.Training)
+                    await trainingPolicy.UpdateTrainingAsync(obsArray, actionArray);
+                else
+                    await inferenceRunner.InferAsync(obsArray, actionArray); // 동기 or 비동기, ONNX 러너 시그니처에 맞춰
 
-                entities = unitQuery.ToEntityArray(Allocator.TempJob);
-
-                for (int i = 0; i < count; i++)
-                {
-                    var entity = entities[i];
-
-                    em.SetComponentData(entity, new CUnitState
-                    {
-                        Debug = "RL Runner.cs",
-                        unitState = (UnitState)actionArray[i].action_index
-                    });
-
-                }
-
-                entities.Dispose();
+                ApplyActions();
             }
 
             await Awaitable.NextFrameAsync();
         }
     }
 
-    CObservation Reward(CObservation parm)
+    void ApplyActions()
     {
-        float distance = math.length(new float2(parm.dx, parm.dy)); // dx=x축, dy=z축 성분 (필드 이름이 dy지만 실제론 z)
-        float score = (1f - distance) * 5f;
-        
-        score -= parm.selfHp * 10f;
-        score += parm.targetHp * 10f;
-        score += (1 - parm.alive) * -50f;
-        score += parm.alive * 1f;
+        var em = World.DefaultGameObjectInjectionWorld.EntityManager;
+        var entities = unitQuery.ToEntityArray(Allocator.TempJob);
 
-        parm.reward = score;
-        return parm;
+        for (int i = 0; i < entities.Length; i++)
+        {
+            em.SetComponentData(entities[i], new CUnitState
+            {
+                Debug = "RL Runner.cs",
+                unitState = (UnitState)actionArray[i].action_index
+            });
+        }
+
+        entities.Dispose();
     }
-    CObservation ZeroReward(CObservation parm)
+
+    void EnsureArrays(int count)
     {
-        parm.reward = 0;
-        return parm;
+        if (!obsArray.IsCreated || obsArray.Length != count)
+        {
+            if (obsArray.IsCreated) obsArray.Dispose();
+            obsArray = new NativeArray<CObservation>(count, Allocator.Persistent);
+        }
+        if (!actionArray.IsCreated || actionArray.Length != count)
+        {
+            if (actionArray.IsCreated) actionArray.Dispose();
+            actionArray = new NativeArray<CActionData>(count, Allocator.Persistent);
+        }
+    }
+
+    EntityQuery BuildQuery()
+    {
+        var em = World.DefaultGameObjectInjectionWorld.EntityManager;
+        var build = new EntityQueryBuilder(Allocator.Temp)
+            .WithAll<RLParm, CHealth, CNearTarget, LocalTransform>()
+            .WithOptions(EntityQueryOptions.IncludeDisabledEntities);
+        var query = em.CreateEntityQuery(build);
+        build.Dispose();
+        return query;
     }
 
     void OnDestroy()
     {
-        policy?.Dispose();
+        trainingPolicy?.Dispose();
         if (obsArray.IsCreated) obsArray.Dispose();
         if (actionArray.IsCreated) actionArray.Dispose();
     }
 }
+
+public enum RunMode { Training, Inference }

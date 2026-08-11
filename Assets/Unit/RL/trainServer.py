@@ -192,14 +192,10 @@ class UnityDiscreteVecEnv(VecEnv):
 
         infos = [{} for _ in range(self.num_envs)]
 
-        if np.any(dones):
-            dones[:] = True
-            next_batch_data = self.bridge.wait_obs()
-            if len(next_batch_data) != self.num_envs:
-                raise ValueError(f"[리셋 에러] 슬롯 수 불일치. 기대: {self.num_envs}, 실제: {len(next_batch_data)}")
-            next_obs = np.array([d["obs_vector"] for d in next_batch_data], dtype=np.float32)
-            infos = [{"terminal_observation": obs[i]} for i in range(self.num_envs)]
-            return next_obs, rewards, dones, infos
+            # 죽은 슬롯만 terminal_observation 기록 (SB3 관례)
+        for i in range(self.num_envs):
+            if dones[i]:
+                infos[i]["terminal_observation"] = obs[i].copy()
 
         return obs, rewards, dones, infos
 

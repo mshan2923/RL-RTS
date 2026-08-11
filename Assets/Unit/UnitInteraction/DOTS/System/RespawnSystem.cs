@@ -9,7 +9,7 @@ partial struct RespawnSystem : ISystem
     EntityQuery respawnParamQuery;
     Random random;
 
-    [BurstCompile]
+    // [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
         using var build = new EntityQueryBuilder(Allocator.Temp);
@@ -33,6 +33,11 @@ partial struct RespawnSystem : ISystem
         var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>()
             .CreateCommandBuffer(state.WorldUnmanaged).AsParallelWriter();
 
+        state.Dependency = new taggingJob
+        {
+            ecb = ecb
+        }.ScheduleParallel(state.Dependency);
+        
         var job = new RespawnJob
         {
             paramMap = paramMap,
@@ -51,6 +56,19 @@ partial struct RespawnSystem : ISystem
     public void OnDestroy(ref SystemState state) { }
 
     [BurstCompile]
+    public partial struct taggingJob : IJobEntity
+    {
+        public EntityCommandBuffer.ParallelWriter ecb;
+
+        public void Execute([EntityIndexInQuery] int index, Entity entity, in CHealth health)
+        {
+            if (health.Current > 0) return;
+
+            ecb.SetComponentEnabled<UnitRespawnTag>(index, entity, true);
+        }
+    }
+
+    [BurstCompile]
     [WithAll(typeof(UnitRespawnTag))]
     public partial struct RespawnJob : IJobEntity
     {
@@ -59,7 +77,7 @@ partial struct RespawnSystem : ISystem
         public EntityCommandBuffer.ParallelWriter ecb;
 
         public void Execute([EntityIndexInQuery] int index, Entity entity,
-            ref LocalTransform transform, ref MoveTargetComponent moveTo, in UnitEnumComponent team, in UnitRespawnTag tag)
+            ref LocalTransform transform, ref MoveTargetComponent moveTo, in UnitEnumComponent team, in UnitRespawnTag tag, in CHealth health)
         {
             if (!paramMap.TryGetValue(team, out var rLParm)) return;
 
@@ -74,6 +92,12 @@ partial struct RespawnSystem : ISystem
             moveTo.MoveTo = pos;
 
             ecb.SetComponentEnabled<UnitRespawnTag>(index, entity, false);
+
+            var result = health;
+            result.Prev = result.Max;
+            result.Current = result.Max;
+
+            ecb.SetComponent<CHealth>(index, entity, result);
         }
     }
 }

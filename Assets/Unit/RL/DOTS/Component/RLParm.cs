@@ -1,6 +1,7 @@
 using Unity.Entities;
 using Unity.Mathematics;
 
+[System.Obsolete]
 public struct RLParm : IComponentData // 혹은 그냥 buffer/singleton에 담을 struct
 {
     public float3 Direction;
