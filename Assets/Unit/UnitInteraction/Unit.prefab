@@ -16,7 +16,6 @@ GameObject:
   - component: {fileID: 2078950388863018902}
   - component: {fileID: 7382118146048975615}
   - component: {fileID: 4955063042748437934}
-  - component: {fileID: 6610349877131417540}
   m_Layer: 0
   m_Name: Unit
   m_TagString: Untagged
@@ -171,15 +170,3 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::UnitStateAuthring
   unitState: 0
---- !u!114 &6610349877131417540
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1713528423606288365}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 5690e85894395514189c964112e7572a, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::RL_UnitAuthoring

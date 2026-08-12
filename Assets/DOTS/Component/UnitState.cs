@@ -1,6 +1,11 @@
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
 
+public struct CUnitColor : IComponentData
+{
+    public float4 color;
+}
 public struct CHealth : IComponentData
 {
     public float Prev;

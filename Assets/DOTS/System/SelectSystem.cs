@@ -16,6 +16,9 @@ partial struct SelectSystem : ISystem
     EntityQuery directionQuery;
     EntityQuery selectQuery;
 
+    float4 selectColor;
+    CUnitPrefab unitPrefab;
+
     public void OnCreate(ref SystemState state)
     {
         isDragging = false;
@@ -49,6 +52,9 @@ partial struct SelectSystem : ISystem
 
             foreach (var (_, entity) in SystemAPI.Query<SelectComponent>().WithEntityAccess())
                 SystemAPI.SetComponentEnabled<SelectComponent>(entity, false);
+
+            selectColor = SystemAPI.GetSingleton<CSelectColor>().color;
+            unitPrefab = SystemAPI.GetSingleton<CUnitPrefab>();
         }
 
         bool isShiftPressed = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
@@ -74,7 +80,7 @@ partial struct SelectSystem : ISystem
         Rect rect = GetScreenRect(startScreenPos, Input.mousePosition);
 
         // 드래그 중: 실제 선택 상태는 그대로 두고, 색상만 미리보기로 갱신
-        foreach (var (transform, entity) in SystemAPI.Query<RefRO<LocalTransform>>().WithAll<UnitComponent>().WithEntityAccess())
+        foreach (var (transform, team, entity) in SystemAPI.Query<RefRO<LocalTransform>, RefRO<UnitEnumComponent>>().WithAll<UnitComponent>().WithEntityAccess())
         {
             Vector3 screenPos = cam.WorldToScreenPoint(transform.ValueRO.Position);
             bool isInside = screenPos.z > 0 && rect.Contains(new Vector2(screenPos.x, screenPos.y));
@@ -82,11 +88,27 @@ partial struct SelectSystem : ISystem
 
             bool previewSelected = isInside || (isShiftPressed && alreadySelected);
 
+            var color = float4.zero;
+            switch (team.ValueRO.type)
+            {
+                case UnitEnum.Nature:
+                    color = new float4(1, 1, 1, 1);
+                    break;
+                case UnitEnum.Ally:
+                    color = unitPrefab.AllyColor;
+                    break;
+                case UnitEnum.Enmy:
+                    color = unitPrefab.EnmyColor;
+                    break;
+                default:
+                    break;
+            }
+
             state.EntityManager.SetComponentData(entity, new URPMaterialPropertyBaseColor
             {
-                Value = previewSelected ? new float4(1, 0, 0, 1) : new float4(1, 1, 1, 1)
+                Value = previewSelected ? selectColor : color
             });
-            
+
         }
 
         if (!Input.GetMouseButtonUp(0)) return;
@@ -121,12 +143,29 @@ partial struct SelectSystem : ISystem
         }
 
         // 색상을 실제 선택 상태로 최종 동기화 (미리보기 잔상 제거)
-        foreach (var (transform, entity) in SystemAPI.Query<RefRO<LocalTransform>>().WithAll<UnitComponent>().WithEntityAccess())
+        foreach (var (transform, team, entity) in SystemAPI.Query<RefRO<LocalTransform>, RefRO<UnitEnumComponent>>().WithAll<UnitComponent>().WithEntityAccess())
         {
             bool selected = state.EntityManager.IsComponentEnabled<SelectComponent>(entity);
+
+            var color = float4.zero;
+            switch (team.ValueRO.type)
+            {
+                case UnitEnum.Nature:
+                    color = new float4(1, 1, 1, 1);
+                    break;
+                case UnitEnum.Ally:
+                    color = unitPrefab.AllyColor;
+                    break;
+                case UnitEnum.Enmy:
+                    color = unitPrefab.EnmyColor;
+                    break;
+                default:
+                    break;
+            }
+
             state.EntityManager.SetComponentData(entity, new URPMaterialPropertyBaseColor
             {
-                Value = selected ? new float4(1, 0, 0, 1) : new float4(1, 1, 1, 1)
+                Value = selected ? selectColor: color
             });
         }
     }

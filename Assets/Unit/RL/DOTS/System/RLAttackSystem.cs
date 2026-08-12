@@ -1,3 +1,4 @@
+using System;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
@@ -90,12 +91,13 @@ partial struct RLAttackSystem : ISystem
             if (near.entity != Entity.Null && hpLookup.HasComponent(near.entity))
             {
                 var targetHp = hpLookup[near.entity];
-                targetHp.Prev = targetHp.Current;
+                targetHp.Prev = targetHp.Current;//? RLRunner에서 변경값 제거
                 targetHp.Current -= unitParm.Damage;
                 ecb.SetComponent(index, near.entity, targetHp);
             }
 
             ecb.SetComponentEnabled<ReadyToShotTag>(index, entity, false);
+
         }
     }
 }

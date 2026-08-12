@@ -2,6 +2,7 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Rendering;
 using Unity.Transforms;
 
 partial struct RespawnSystem : ISystem
@@ -27,22 +28,24 @@ partial struct RespawnSystem : ISystem
         using (var paramArray = respawnParamQuery.ToComponentDataArray<RLParmCompoenent>(Allocator.Temp))
         {
             foreach (var p in paramArray)
-                paramMap.TryAdd(new UnitEnumComponent{ type = p.TeamType }, p); 
+                paramMap.TryAdd(new UnitEnumComponent { type = p.TeamType }, p);
         }
 
         var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>()
             .CreateCommandBuffer(state.WorldUnmanaged).AsParallelWriter();
+        var color = SystemAPI.GetSingleton<CUnitPrefab>();
 
         state.Dependency = new taggingJob
         {
             ecb = ecb
         }.ScheduleParallel(state.Dependency);
-        
+
         var job = new RespawnJob
         {
             paramMap = paramMap,
             random = random,
-            ecb = ecb
+            ecb = ecb,
+            unitPrefab = color
         };
 
         state.Dependency = job.Schedule(state.Dependency); // Random 상태 갱신 때문에 병렬화 안 함
@@ -76,6 +79,8 @@ partial struct RespawnSystem : ISystem
         public Random random;
         public EntityCommandBuffer.ParallelWriter ecb;
 
+        public CUnitPrefab unitPrefab;
+
         public void Execute([EntityIndexInQuery] int index, Entity entity,
             ref LocalTransform transform, ref MoveTargetComponent moveTo, in UnitEnumComponent team, in UnitRespawnTag tag, in CHealth health)
         {
@@ -98,6 +103,21 @@ partial struct RespawnSystem : ISystem
             result.Current = result.Max;
 
             ecb.SetComponent<CHealth>(index, entity, result);
+
+            switch (team.type)
+            {
+                case UnitEnum.Nature:
+                    ecb.SetComponent(index, entity, new URPMaterialPropertyBaseColor {Value = new float4(1,1,1,1)});
+                    break;
+                case UnitEnum.Ally:
+                    ecb.SetComponent(index, entity, new URPMaterialPropertyBaseColor {Value = unitPrefab.AllyColor});
+                    break;
+                case UnitEnum.Enmy:
+                    ecb.SetComponent(index, entity, new URPMaterialPropertyBaseColor {Value = unitPrefab.EnmyColor});
+                    break;
+                default:
+                    break;
+            }
         }
     }
 }

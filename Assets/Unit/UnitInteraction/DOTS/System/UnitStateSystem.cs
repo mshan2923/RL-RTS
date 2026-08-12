@@ -27,15 +27,10 @@ public void OnUpdate(ref SystemState state)
             .WithAll<CCommandPending>()
             .WithEntityAccess())
         {
-            if (unitState.ValueRO.unitState != UnitState.None)
-            {
                 moveto.ValueRW.MoveTo = Target;
-            }
 
                 switch (unitState.ValueRO.unitState)
                 {
-                    case UnitState.None:
-                        // break;
                     case UnitState.MoveToward:
                     case UnitState.Retreat:
                         moveto.ValueRW.MoveTo = Target;

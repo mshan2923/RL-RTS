@@ -44,7 +44,7 @@ public class RLManager : MonoBehaviour
         SpawnUnits(em, EnmyData, EnmyMaxAmount, UnitEnum.Enmy, ref nextId);
 
 
-        // 생성으로 스폰을 DOTS에게 요청 
+        // 생성으로 스폰을 DOTS에게 요청 -> RLManagerSystem
     }
 
     void SpawnUnits(EntityManager em, UnitData data, int amount, UnitEnum teamType, ref int nextId)
@@ -73,6 +73,7 @@ public class RLManager : MonoBehaviour
                 AttackDistance = data.AttackDistance,
                 AttackTendency = data.AttackTendency
             });
+
 
     }
 }

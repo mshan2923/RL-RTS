@@ -33,10 +33,10 @@ partial struct RLExecuteSystem : ISystem
 
         state.Dependency = new ExecuteJob
         {
-            transLookup = state.GetComponentLookup<LocalTransform>(true),
+            transLookup = state.GetComponentLookup<LocalTransform>(true),//! Create 에서 만들기
             r2aLookup = state.GetComponentLookup<CanToAttackTag>(true),
             ecb = ecb.AsParallelWriter(),
-            DetectDistance = 5f
+            DetectDistance = 5f //! ============ 하드코딩
         }.ScheduleParallel(state.Dependency);
     }
 
@@ -49,7 +49,7 @@ partial struct RLExecuteSystem : ISystem
     EntityQuery BuildQuery(ref SystemState state)
     {
         var em = state.EntityManager;
-        var build = new EntityQueryBuilder(Allocator.Temp).WithAll<RLParm, CUnitState, LocalTransform>().WithAny<Disabled>();
+        var build = new EntityQueryBuilder(Allocator.Temp).WithAll<CUnitState, LocalTransform>().WithAny<Disabled>();
         var query = em.CreateEntityQuery(build);
         build.Dispose();
         return query;
@@ -77,9 +77,6 @@ partial struct RLExecuteSystem : ISystem
 
             switch (unitState.unitState)
             {
-                case UnitState.None:
-                    //moveTarget.MoveTo = transform.Position;
-                    break;
                 case UnitState.MoveToward:
                     moveTarget.MoveTo = transform.Position + dir;
                     break;

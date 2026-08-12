@@ -2,11 +2,18 @@ using Unity.Collections;
 using UnityEngine;
 using Unity.InferenceEngine;
 using System.Threading.Tasks;
+using System;
 
-public class OnnxInferenceRunner
+/// <summary>
+/// 
+/// </summary>
+/// <typeparam name="action">ActionType</typeparam>
+public class OnnxInferenceRunner<action> where action : Enum
 {
     Model runtimeModel;
     Worker worker;
+
+    int actionAmount = Enum.GetNames(typeof(action)).Length;
 
     public OnnxInferenceRunner(ModelAsset modelAsset)
     {
@@ -40,7 +47,7 @@ public class OnnxInferenceRunner
         {
             int bestAction = 0;
             float bestVal = float.MinValue;
-            for (int a = 0; a < 5; a++)
+            for (int a = 0; a < actionAmount; a++)
             {
                 float v = outputTensor[i, a];
                 if (v > bestVal) { bestVal = v; bestAction = a; }
@@ -82,7 +89,7 @@ public class OnnxInferenceRunner
         {
             int bestAction = 0;
             float bestVal = float.MinValue;
-            for (int a = 0; a < 5; a++)
+            for (int a = 0; a < actionAmount; a++)
             {
                 float v = result[i, a];
                 if (v > bestVal) { bestVal = v; bestAction = a; }

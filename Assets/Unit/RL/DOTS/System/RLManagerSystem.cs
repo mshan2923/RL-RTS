@@ -85,9 +85,7 @@ partial struct RLManagerSystem : ISystem
                 var spawnd = ecb.Instantiate(index , prefabEntity);
 
                 ecb.SetComponent(index, spawnd, unitEnum);
-                //ecb.SetComponent<CHealth>(index, spawnd, health);
-                //ecb.SetComponent(index, spawnd, unitParams);
-                //? 컴포넌트 추가
+                ecb.SetComponentEnabled<UnitRespawnTag>(index, spawnd, true);
 
 
                 //todo 일단 여기서 배치 해놓고  나중에 리스폰 태그 활성화 시키기
@@ -105,6 +103,7 @@ partial struct RLManagerSystem : ISystem
                 // {
                 //    MoveTo =  pos
                 // });
+
             }
 
         }

@@ -182,6 +182,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Direction
   Layer: 0
+  SelectColor: {r: 1, g: 0.9706023, b: 0, a: 1}
 --- !u!114 &1255320372
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -223,6 +224,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::RLManagerResoner
   AllyUnit: {fileID: 1713528423606288365, guid: 3118462217cd2ed42986e4b30990623d, type: 3}
   EnmyUnit: {fileID: 1713528423606288365, guid: 3118462217cd2ed42986e4b30990623d, type: 3}
+  AllyColor: {r: 0, g: 1, b: 0, a: 1}
+  EnmyColor: {r: 1, g: 0, b: 0, a: 1}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

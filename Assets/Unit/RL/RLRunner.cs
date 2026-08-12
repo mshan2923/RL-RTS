@@ -14,7 +14,7 @@ public class RLRunner : MonoBehaviour
     public RunMode mode; // Training / Inference
 
     PythonTrainingPolicy<CObservation, CActionData> trainingPolicy; // Training 전용
-    OnnxInferenceRunner inferenceRunner; // Inference 전용, 기존 InferenceRunner 재사용
+    OnnxInferenceRunner<UnitState> inferenceRunner; // Inference 전용, 기존 InferenceRunner 재사용
 
     EntityQuery unitQuery;
     NativeArray<CObservation> obsArray;
@@ -25,7 +25,7 @@ public class RLRunner : MonoBehaviour
         if (mode == RunMode.Training)
             trainingPolicy = new PythonTrainingPolicy<CObservation, CActionData>("127.0.0.1", 5555);
         else
-            inferenceRunner = new OnnxInferenceRunner(model); // 예시
+            inferenceRunner = new OnnxInferenceRunner<UnitState>(model); // 예시
 
         unitQuery = BuildQuery();
         await Loop();
@@ -92,6 +92,9 @@ public class RLRunner : MonoBehaviour
 
         for (int i = 0; i < entities.Length; i++)
         {
+
+            Debug.Log(actionArray[i].action_index);
+            
             em.SetComponentData(entities[i], new CUnitState
             {
                 Debug = "RL Runner.cs",
@@ -120,7 +123,7 @@ public class RLRunner : MonoBehaviour
     {
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
         var build = new EntityQueryBuilder(Allocator.Temp)
-            .WithAll<RLParm, CHealth, CNearTarget, LocalTransform>()
+            .WithAll<CHealth, CNearTarget, LocalTransform>()
             .WithOptions(EntityQueryOptions.IncludeDisabledEntities);
         var query = em.CreateEntityQuery(build);
         build.Dispose();

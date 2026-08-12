@@ -28,6 +28,7 @@ class UnitBaker : Baker<Unit>
         {
             Value = new Unity.Mathematics.float4(1,1,1,1)
         });
+
         AddComponent(entity, new CHealth
         {
             Prev = authoring.Health,
