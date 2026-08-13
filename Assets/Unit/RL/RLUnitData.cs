@@ -2,13 +2,21 @@ using System.Runtime.InteropServices;
 using Unity.Entities;
 using UnityEngine;
 
+
+public static class RLConstants
+{
+    public const int OBS_DIM = 6; // dx, dy, selfHp, targetHp, InAttackRange, distToEdge
+    public const int NUM_ACTIONS = 4; // MoveToward, HoldPosition, Retreat, Action
+}
+
     [StructLayout(LayoutKind.Sequential)]
-    public struct CObservation : IComponentData
+public struct CObservation : IComponentData
 {
     public int unit_id;
     public float dx, dy, selfHp, targetHp;
     public int alive;
     public int InAttackRange;
+    public float distToEdge; // 추가
     public float reward;
     public int done;
 }

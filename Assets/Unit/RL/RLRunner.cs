@@ -55,8 +55,7 @@ public class RLRunner : MonoBehaviour
             {
                 var result = ObservationBuilder.Build(
                     i, entities[i], transArray[i].Position, healthArray[i],
-                    nearTargetArray[i].entity, em,
-                    rLManager.AllyData.DetectDistance, rLManager.AllyData.AttackDistance);
+                    nearTargetArray[i].entity, em, rLManager);
 
                 var obs = result.obs;
 
@@ -92,8 +91,6 @@ public class RLRunner : MonoBehaviour
 
         for (int i = 0; i < entities.Length; i++)
         {
-
-            Debug.Log(actionArray[i].action_index);
             
             em.SetComponentData(entities[i], new CUnitState
             {

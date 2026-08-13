@@ -77,9 +77,6 @@ partial struct RLManagerSystem : ISystem
             }
 
 
-            var size = new float3(rLParm.Width, 0 , rLParm.Height);
-            var offset = new float3(rLParm.SpawnRandomOffset, 0 , rLParm.SpawnRandomOffset);
-
             for(int i = 0 ; i < rLParm.Amount; i++)
             {
                 var spawnd = ecb.Instantiate(index , prefabEntity);

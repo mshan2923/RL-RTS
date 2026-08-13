@@ -40,6 +40,14 @@ public class RLManager : MonoBehaviour
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
 
         int nextId = 0;
+
+        var entity = em.CreateEntity();
+        em.AddComponentData(entity, new RLMapSetting
+        {
+            Size = Size,
+            SpawnRandomOffset = RandomOffset
+        });
+
         SpawnUnits(em, AllyData, AllyAmount, UnitEnum.Ally, ref nextId);
         SpawnUnits(em, EnmyData, EnmyMaxAmount, UnitEnum.Enmy, ref nextId);
 
@@ -54,9 +62,9 @@ public class RLManager : MonoBehaviour
             {
                 Amount = amount,
                 TeamType = teamType,
-                Width = Size.x,
-                Height = Size.y,
-                SpawnRandomOffset = RandomOffset
+                // Width = Size.x,
+                // Height = Size.y,
+                // SpawnRandomOffset = RandomOffset
             });
             em.AddComponentData(entity, new UnitEnumComponent { type = teamType });
             em.AddComponentData(entity, new CHealth 

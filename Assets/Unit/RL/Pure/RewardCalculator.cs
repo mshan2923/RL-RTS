@@ -6,22 +6,24 @@ public static class RewardCalculator
     {
         if (isOutOfPerception)
         {
-            parm.reward = 0f;
+            parm.reward = -0.8f;
             return parm;
         }
 
-        float distError = math.abs(attackDistNormalized - 1f);
-        float distScore;
-        if (distError < 0)
-            distScore = distError * 1.0f; // 너무 가까우면 선형 페널티 (마이너스로 떨어짐)
-        else
-            distScore = (1f - math.saturate(distError)) * 0.5f; // 멀면 기존처럼
-
+        float distError = attackDistNormalized - 1f;
+        float distScore = distError < 0
+            ? distError * 1.0f          // 너무 가까움 -> 마이너스
+            : -distError * 0.5f;         // 너무 멂 -> 마이너스 (기존엔 0에서 막혔던 부분)
+        
         float score = distScore;
-        score -= parm.selfHp * 1f;
-        score += parm.targetHp * 1f;
+        // score -= parm.selfHp * 1f;
+        // score += parm.targetHp * 1f;
         score += parm.alive == 1 ? 0.05f : -1f;
         score += parm.InAttackRange * 1f;
+
+            // 가장자리에 가까울수록(distToEdge가 0에 가까울수록) 페널티
+        // score += (parm.distToEdge - 1f) * 0.3f; // distToEdge=1(중앙)이면 0, distToEdge=0(벽)이면 -0.3
+
 
         parm.reward = score;
         return parm;
