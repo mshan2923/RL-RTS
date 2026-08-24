@@ -18,7 +18,7 @@ wrapper = PolicyWrapper(model)
 wrapper.policy.to('cpu')
 wrapper.eval()
 
-dummy_input = torch.zeros((1, 6), dtype=torch.float32)  # dx, dy, selfHp, targetHp, InAttackRange , distToEdge
+dummy_input = torch.zeros((1, 7), dtype=torch.float32)  # dx, dy, delta, selfHp, targetHp, InAttackRange , distToEdge
 
 torch.onnx.export(
     wrapper, (dummy_input,), "ActionSelect_Policy.onnx",

@@ -57,7 +57,36 @@ public class RLRunner : MonoBehaviour
                     i, entities[i], transArray[i].Position, healthArray[i],
                     nearTargetArray[i].entity, em, rLManager);
 
+                // target Prev 갱신 (기존 코드)
+                if (em.Exists(nearTargetArray[i].entity))
+                {
+                    var targetHealth = em.GetComponentData<CHealth>(nearTargetArray[i].entity);
+                    targetHealth.Prev = targetHealth.Current;
+                    em.SetComponentData(nearTargetArray[i].entity, targetHealth);
+                }
+
+                // self HP Prev 갱신 (이전에 고친 부분)
+                var selfHealthCurrent = healthArray[i];
+                selfHealthCurrent.Prev = selfHealthCurrent.Current;
+                em.SetComponentData(entities[i], selfHealthCurrent);
+
+                // PrevPhi 갱신 (새로 추가)
+                if (!result.isOutOfPerception)
+                {
+                    var shaping = em.GetComponentData<CRLShaping>(entities[i]);
+                    shaping.PrevPhi = result.currentPhi;
+                    em.SetComponentData(entities[i], shaping);
+                }
+
                 var obs = result.obs;
+
+                if (float.IsNaN(obs.dx) || float.IsInfinity(obs.dx) ||
+                    float.IsNaN(obs.selfHp) || float.IsInfinity(obs.selfHp) ||
+                    float.IsNaN(obs.distToEdge) || float.IsInfinity(obs.distToEdge) ||
+                    float.IsNaN(obs.delta) || float.IsInfinity(obs.delta))
+                {
+                    Debug.LogError($"[NaN 감지] unit={obs.unit_id}, dx={obs.dx}, selfHp={obs.selfHp}, distToEdge={obs.distToEdge}, delta={obs.delta}");
+                }
 
                 if (mode == RunMode.Training)
                     obs = RewardCalculator.Apply(obs, result.isOutOfPerception, result.attackDistNormalized);

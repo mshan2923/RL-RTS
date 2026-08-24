@@ -48,3 +48,10 @@ public struct CNearTarget : IComponentData
     public Entity entity;
 }
 
+/// <summary>
+/// RL 이전 목표물과의 거리
+/// </summary>
+public struct CRLShaping : IComponentData
+{
+    public float PrevPhi;
+}

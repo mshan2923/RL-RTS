@@ -53,5 +53,10 @@ class UnitBaker : Baker<Unit>
         SetComponentEnabled<ReadyToShotTag>(entity, false);
         AddComponent<ReadyToActionTag>(entity);
         SetComponentEnabled<ReadyToActionTag>(entity, false);
-    }
+
+        AddComponent<CRLShaping>(entity , new CRLShaping
+        {
+            PrevPhi = 0
+        });
+    } 
 }

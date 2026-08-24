@@ -33,14 +33,15 @@ public class OnnxInferenceRunner<action> where action : Enum
             var o = obsArray[i];
             inputTensor[i, 0] = o.dx;
             inputTensor[i, 1] = o.dy;
-            inputTensor[i, 2] = o.selfHp;
-            inputTensor[i, 3] = o.targetHp;
-            inputTensor[i, 4] = o.InAttackRange;
-            inputTensor[i, 5] = o.distToEdge;
+            inputTensor[i, 2] = o.delta;
+            inputTensor[i, 3] = o.selfHp;
+            inputTensor[i, 4] = o.targetHp;
+            inputTensor[i, 5] = o.InAttackRange;
+            inputTensor[i, 6] = o.distToEdge;
         }
 
         worker.Schedule(inputTensor);
-        using var outputTensor = worker.PeekOutput() as Tensor<float>;
+        var outputTensor = worker.PeekOutput() as Tensor<float>;
         outputTensor.CompleteAllPendingOperations(); // 동기 대기
 
         // logits(action_dim=5)에서 argmax
@@ -60,9 +61,11 @@ public class OnnxInferenceRunner<action> where action : Enum
 
     public async Task InferAsync(NativeArray<CObservation> obsArray, NativeArray<CActionData> actionArray)
     {
-        int count = obsArray.Length;
-        int obsDim = RLConstants.OBS_DIM;// dx, dy, selfHp, targetHp, InAttackRange, distToEdge
+        if (!actionArray.IsCreated) return;
 
+        int count = obsArray.Length;
+        int obsDim = RLConstants.OBS_DIM;
+        
         // obs를 입력 텐서로 변환
         using var inputTensor = new Tensor<float>(new TensorShape(count, obsDim));
         for (int i = 0; i < count; i++)
@@ -70,21 +73,22 @@ public class OnnxInferenceRunner<action> where action : Enum
             var o = obsArray[i];
             inputTensor[i, 0] = o.dx;
             inputTensor[i, 1] = o.dy;
-            inputTensor[i, 2] = o.selfHp;
-            inputTensor[i, 3] = o.targetHp;
-            inputTensor[i, 4] = o.InAttackRange;
-            inputTensor[i, 5] = o.distToEdge;
+            inputTensor[i, 2] = o.delta;
+            inputTensor[i, 3] = o.selfHp;
+            inputTensor[i, 4] = o.targetHp;
+            inputTensor[i, 5] = o.InAttackRange;
+            inputTensor[i, 6] = o.distToEdge;
         }
 
         worker.Schedule(inputTensor);
-        using var outputTensor = worker.PeekOutput() as Tensor<float>;
+        var outputTensor = worker.PeekOutput() as Tensor<float>;
         if (outputTensor == null)
         {
             Debug.LogError("[InferenceRunner] output tensor cast 실패 - 모델 output 타입 확인 필요");
             return;
         }
 
-        var result = await outputTensor.ReadbackAndCloneAsync();
+        using var result = await outputTensor.ReadbackAndCloneAsync();
 
         // logits(action_dim=5)에서 argmax
         for (int i = 0; i < count; i++)
