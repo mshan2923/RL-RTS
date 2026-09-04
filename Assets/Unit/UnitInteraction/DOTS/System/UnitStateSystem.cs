@@ -38,9 +38,6 @@ public void OnUpdate(ref SystemState state)
                     case UnitState.HoldPosition:
                         moveto.ValueRW.MoveTo = trans.ValueRO.Position;
                         break;
-                    case UnitState.Action:
-                        moveto.ValueRW.MoveTo = Target;
-                        break;
                 }
 
                 SystemAPI.SetComponentEnabled<CCommandPending>(entity, false);

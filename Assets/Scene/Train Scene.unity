@@ -748,7 +748,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: 0, y: 0.0000032700698}
+  m_AnchoredPosition: {x: 0, y: 0.00071219367}
   m_SizeDelta: {x: 0, y: 150}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &1198197708
@@ -834,7 +834,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8afa25ca6a654f4418bc8a65c4aa7827, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RLManager
-  AllyAmount: 5
+  AllyAmount: 2
   AllyData:
     Damager: 1
     FireRate: 1
@@ -842,7 +842,7 @@ MonoBehaviour:
     DetectDistance: 5
     AttackDistance: 3
     AttackTendency: 0.5
-  EnmyMaxAmount: 5
+  EnmyMaxAmount: 2
   EnmyData:
     Damager: 1
     FireRate: 1
@@ -851,8 +851,8 @@ MonoBehaviour:
     AttackDistance: 3
     AttackTendency: 0.5
   unitSize: 0.25
-  Size: {x: 20, y: 20}
-  RandomOffset: 10
+  Size: {x: 10, y: 10}
+  RandomOffset: 5
 --- !u!114 &1199436527
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -867,7 +867,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::RLRunner
   rLManager: {fileID: 1199436525}
   model: {fileID: 5022602860645237092, guid: 75493b6a2ecbe644dbdaf4fc7ac1c0da, type: 3}
-  mode: 1
+  mode: 0
 --- !u!1 &1231813101
 GameObject:
   m_ObjectHideFlags: 0
@@ -1157,7 +1157,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1780066667}
   m_Direction: 2
   m_Value: 0
-  m_Size: 0.9998564
+  m_Size: 1
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:

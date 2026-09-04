@@ -4,7 +4,7 @@ using Unity.Entities;
 
 public enum UnitState : int
 {
-    MoveToward, HoldPosition, Retreat, Action
+    MoveToward, HoldPosition, Retreat, //Action
 }
 public struct CUnitState : IComponentData
 {

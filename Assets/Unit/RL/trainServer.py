@@ -18,7 +18,7 @@ class RLConfig:
     ACTION_SIZE = struct.calcsize(ACTION_FORMAT)
 
     OBS_SHAPE = (7,)   # dx, dy, dalta, selfHp, targetHp, in_attack_range, distToEdge
-    NUM_ACTIONS = 4    # Move, Stop, Attack, Action
+    NUM_ACTIONS = 3    # Move, Stop, Attack, Action
 
     OBS_LOW, OBS_HIGH = -1.0, 1.0
 

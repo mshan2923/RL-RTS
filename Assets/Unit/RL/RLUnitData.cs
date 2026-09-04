@@ -6,7 +6,7 @@ using UnityEngine;
 public static class RLConstants
 {
     public const int OBS_DIM = 7; // dx, dy, delta, selfHp, targetHp, InAttackRange, distToEdge
-    public const int NUM_ACTIONS = 4; // MoveToward, HoldPosition, Retreat, Action
+    public const int NUM_ACTIONS = 3; // MoveToward, HoldPosition, Retreat, Action
 }
 
     [StructLayout(LayoutKind.Sequential)]

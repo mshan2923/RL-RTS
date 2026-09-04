@@ -17,23 +17,33 @@ public static class ObservationBuilder
         int unitIndex, Entity entity, float3 selfPos,
         CHealth selfHealth, Entity target, EntityManager em, RLManager rLManager)
     {
+        // 공통: distToEdge는 타겟 유무와 무관하게 항상 계산 가능
+        float distToEdgeX = math.min(selfPos.x, rLManager.Size.x - selfPos.x) / (rLManager.Size.x / 2f);
+        float distToEdgeZ = math.min(selfPos.z, rLManager.Size.y - selfPos.z) / (rLManager.Size.y / 2f);
+        float distToEdge = math.min(distToEdgeX, distToEdgeZ);
+
+        var shaping = em.GetComponentData<CRLShaping>(entity);
+
         if (target == Entity.Null)
         {
+            // 타겟 자체가 없으면 거리 항은 의미 없음 -> distToEdge만으로 phi 구성
+            float phiNoTarget = (distToEdge - 1f) * 0.3f;
+            float deltaNoTarget = phiNoTarget - shaping.PrevPhi;
+
             var obs = new CObservation
             {
                 unit_id = unitIndex,
                 dx = 0f, dy = 0f,
-                delta = 0,
-                selfHp = selfHealth.Current / selfHealth.Max,
+                delta = deltaNoTarget,
+                selfHp = 0,
                 targetHp = 0f,
                 InAttackRange = 0,
-                distToEdge = 0,
+                distToEdge = distToEdge,
                 alive = em.IsEnabled(entity) ? 1 : 0,
                 reward = 0f,
                 done = 0
             };
-            // 타겟 없을 땐 phi도 의미 없으니 0으로
-            return new BuildResult { obs = obs, isOutOfPerception = true, attackDistNormalized = 0f, currentPhi = 0f };
+            return new BuildResult { obs = obs, isOutOfPerception = true, attackDistNormalized = 0f, currentPhi = phiNoTarget };
         }
 
         float detectDistance = 0;
@@ -60,21 +70,13 @@ public static class ObservationBuilder
         float actualDist = math.length(targetPos - selfPos);
         bool isOutOfPerception = actualDist > detectDistance;
 
+        // dx,dy는 인지거리 안/밖 상관없이 항상 실시간 방향(치트 허용) - 구석 쏠림 방지
         var dxy = (targetPos - selfPos) / detectDistance;
-
-        // 원래 공식으로 되돌림 (0 = 완전근접, 1 = 딱 사거리 경계, 1보다 커질수록 더 멂)
         var attackDistNormalized = math.length((targetPos - selfPos) / attackDistance);
 
-        float distToEdgeX = math.min(selfPos.x, rLManager.Size.x - selfPos.x) / (rLManager.Size.x / 2f);
-        float distToEdgeZ = math.min(selfPos.z, rLManager.Size.y - selfPos.z) / (rLManager.Size.y / 2f);
-        float distToEdge = math.min(distToEdgeX, distToEdgeZ);
-
-        // phi: 사거리 경계(1)에 가까울수록 0(최댓값), 멀거나 가까울수록 음수
-        float currentPhi = -math.abs(attackDistNormalized - 1f);
-
-        // PrevPhi는 RLRunner에서 읽어서 넘겨주는 대신, 여기서 직접 읽어도 됨
-        var shaping = em.GetComponentData<CRLShaping>(entity);
+        float currentPhi = RewardCalculator.ComputePhi(attackDistNormalized, distToEdge);
         float delta = currentPhi - shaping.PrevPhi;
+    
 
         var result = new CObservation
         {

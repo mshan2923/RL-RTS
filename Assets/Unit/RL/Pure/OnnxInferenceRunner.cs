@@ -66,7 +66,6 @@ public class OnnxInferenceRunner<action> where action : Enum
         int count = obsArray.Length;
         int obsDim = RLConstants.OBS_DIM;
         
-        // obs를 입력 텐서로 변환
         using var inputTensor = new Tensor<float>(new TensorShape(count, obsDim));
         for (int i = 0; i < count; i++)
         {
@@ -81,7 +80,7 @@ public class OnnxInferenceRunner<action> where action : Enum
         }
 
         worker.Schedule(inputTensor);
-        var outputTensor = worker.PeekOutput() as Tensor<float>;
+        var outputTensor = worker.PeekOutput() as Tensor<float>;//!================
         if (outputTensor == null)
         {
             Debug.LogError("[InferenceRunner] output tensor cast 실패 - 모델 output 타입 확인 필요");
@@ -90,7 +89,9 @@ public class OnnxInferenceRunner<action> where action : Enum
 
         using var result = await outputTensor.ReadbackAndCloneAsync();
 
-        // logits(action_dim=5)에서 argmax
+        // actionArray가 dispose 상태인지 최종 확인
+        if (!actionArray.IsCreated) return;
+
         for (int i = 0; i < count; i++)
         {
             int bestAction = 0;
@@ -101,8 +102,7 @@ public class OnnxInferenceRunner<action> where action : Enum
                 if (v > bestVal) { bestVal = v; bestAction = a; }
             }
 
-            if (actionArray.IsCreated)
-                actionArray[i] = new CActionData { action_index = bestAction };
+            actionArray[i] = new CActionData { action_index = bestAction };
         }
     }
 

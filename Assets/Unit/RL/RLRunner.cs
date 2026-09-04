@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using RL_StepByStep;
 using Unity.Collections;
 using Unity.Entities;
@@ -20,22 +21,37 @@ public class RLRunner : MonoBehaviour
     NativeArray<CObservation> obsArray;
     NativeArray<CActionData> actionArray;
 
+    CancellationTokenSource cts;
+
     async void Start()
     {
+        cts = new CancellationTokenSource();
+
         if (mode == RunMode.Training)
             trainingPolicy = new PythonTrainingPolicy<CObservation, CActionData>("127.0.0.1", 5555);
         else
             inferenceRunner = new OnnxInferenceRunner<UnitState>(model); // 예시
 
         unitQuery = BuildQuery();
-        await Loop();
+
+        try
+        {
+            await Loop(cts.Token);
+        }
+        catch (System.OperationCanceledException)
+        {
+            Debug.Log("RLRunner loop canceled.");
+        }finally
+        {
+            DisposeResources();
+        }
     }
 
-    private async System.Threading.Tasks.Task Loop()
+    private async System.Threading.Tasks.Task Loop(CancellationToken token)
     {
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
 
-        while (true)
+        while (!token.IsCancellationRequested)
         {
             if (unitQuery.CalculateEntityCount() == 0)
             {
@@ -90,7 +106,7 @@ public class RLRunner : MonoBehaviour
 
                 if (mode == RunMode.Training)
                     obs = RewardCalculator.Apply(obs, result.isOutOfPerception, result.attackDistNormalized);
-
+                
                 obsArray[i] = obs;
             }
 
@@ -106,6 +122,7 @@ public class RLRunner : MonoBehaviour
                 else
                     await inferenceRunner.InferAsync(obsArray, actionArray); // 동기 or 비동기, ONNX 러너 시그니처에 맞춰
 
+                token.ThrowIfCancellationRequested();
                 ApplyActions();
             }
 
@@ -156,11 +173,18 @@ public class RLRunner : MonoBehaviour
         return query;
     }
 
-    void OnDestroy()
+    void DisposeResources()
     {
         trainingPolicy?.Dispose();
         if (obsArray.IsCreated) obsArray.Dispose();
         if (actionArray.IsCreated) actionArray.Dispose();
+        inferenceRunner?.Dispose();
+    }
+
+    void OnDestroy()
+    {
+        cts?.Cancel();
+        // DisposeResources()는 Start()의 finally에서 호출되므로 여기서 다시 부르지 않음
     }
 }
 

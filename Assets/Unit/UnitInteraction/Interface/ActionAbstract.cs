@@ -42,7 +42,7 @@ public abstract class ActionAbstract : UnitEnumInterface
             em.SetComponentData(v, new CUnitState
             {
                 Debug = DebugLog(),
-                unitState = UnitState.Action
+                unitState = UnitState.HoldPosition
             });
 
             em.SetComponentEnabled<CCommandPending>(v, true);

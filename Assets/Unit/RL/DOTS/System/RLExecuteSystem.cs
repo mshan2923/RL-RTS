@@ -94,8 +94,6 @@ partial struct RLExecuteSystem : ISystem
                 case UnitState.HoldPosition:
                     moveTarget.MoveTo = transform.Position;
                     break;
-                case UnitState.Action:
-                    break;
                 default:
                     break;
             }
@@ -106,8 +104,8 @@ partial struct RLExecuteSystem : ISystem
                 math.clamp(moveTarget.MoveTo.z, 0, MapSize.y) // .y가 아니라 .z여야 함 (아래 참고)
             );
 
-            if (r2aLookup.IsComponentEnabled(Target) != (unitState.unitState == UnitState.Action))
-                ecb.SetComponentEnabled<CanToAttackTag>(index, Target, unitState.unitState == UnitState.Action);
+            if (r2aLookup.IsComponentEnabled(Target) != (unitState.unitState == UnitState.HoldPosition))
+                ecb.SetComponentEnabled<CanToAttackTag>(index, Target, unitState.unitState == UnitState.HoldPosition);
         }
     }
 }
