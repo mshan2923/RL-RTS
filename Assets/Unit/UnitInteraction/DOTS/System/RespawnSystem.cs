@@ -87,7 +87,7 @@ partial struct RespawnSystem : ISystem
         public RLMapSetting rLMapSetting;
 
         public void Execute([EntityIndexInQuery] int index, Entity entity,
-            ref LocalTransform transform, ref MoveTargetComponent moveTo, in UnitEnumComponent team, in UnitRespawnTag tag, in CHealth health)
+            ref LocalTransform transform, ref MoveTargetComponent moveTo, in UnitEnumComponent team, in UnitRespawnTag tag, in CHealth health, ref CUnitParams unitParams)
         {
             // if (!paramMap.TryGetValue(team, out var rLParm)) return;
 
@@ -108,6 +108,9 @@ partial struct RespawnSystem : ISystem
             result.Current = result.Max;
 
             ecb.SetComponent<CHealth>(index, entity, result);
+
+            //! 유닛별 공격성 - CUnitParams . AttackTendency
+            unitParams.AttackTendency = random.NextFloat(-1f, 1f);
 
             switch (team.type)
             {

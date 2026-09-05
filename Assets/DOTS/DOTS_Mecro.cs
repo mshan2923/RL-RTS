@@ -46,7 +46,7 @@ public static class DOTS_Mecro
 
                 for(int i = 0; i < unitQuery.CalculateEntityCount(); i++)
                 {
-                    pairs.Add(unitenums[i], parms[i]);
+                    pairs.TryAdd(unitenums[i], parms[i]);
                 }
 
                 if (parms.IsCreated) parms.Dispose();

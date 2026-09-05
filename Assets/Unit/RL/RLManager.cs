@@ -20,6 +20,9 @@ public class RLManager : MonoBehaviour
     public Vector2 Size;
     public float RandomOffset = 1f;
 
+    public bool TendencyForEach = false;
+    public PhiConfig PhiConfig = PhiConfig.Default;
+
     [System.Serializable]
     public struct UnitData
     {
@@ -31,7 +34,7 @@ public class RLManager : MonoBehaviour
         /// <summary>
         /// 공격 성향
         /// </summary>
-        [Range(0 ,1)]// Tooltip("공격 성향")
+        [Range(-1 ,1)]// Tooltip("공격 성향")
         public float AttackTendency;
     }
 

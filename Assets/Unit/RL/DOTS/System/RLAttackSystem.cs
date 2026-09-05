@@ -2,6 +2,8 @@ using System;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
+using Unity.Transforms;
 
 partial struct RLAttackSystem : ISystem
 {
@@ -40,6 +42,7 @@ partial struct RLAttackSystem : ISystem
         {
             parmMap = parmMap,
             hpLookup = SystemAPI.GetComponentLookup<CHealth>(true),
+            transformLookup = SystemAPI.GetComponentLookup<LocalTransform>(true),
             ecb = ecb
         };
         state.Dependency = attackJob.Schedule(state.Dependency); // ScheduleParallel 아님 — 안전을 위해
@@ -82,11 +85,20 @@ partial struct RLAttackSystem : ISystem
     {
         [ReadOnly] public NativeHashMap<UnitEnumComponent, CUnitParams> parmMap;
         [ReadOnly] public ComponentLookup<CHealth> hpLookup;
+        [ReadOnly] public ComponentLookup<LocalTransform> transformLookup;
         public EntityCommandBuffer.ParallelWriter ecb;
 
-        public void Execute([EntityIndexInQuery] int index, Entity entity, in UnitEnumComponent team, in CNearTarget near)
+        public void Execute([EntityIndexInQuery] int index, Entity entity, in UnitEnumComponent team, in CNearTarget near  , in LocalTransform localTransform)
         {
             parmMap.TryGetValue(team, out var unitParm);
+
+            if(!transformLookup.HasComponent(near.entity))
+                return;
+            
+            var targetTransform = transformLookup[near.entity];
+
+            if(math.distance(localTransform.Position, targetTransform.Position) > unitParm.AttackDistance)
+                return;
 
             if (near.entity != Entity.Null && hpLookup.HasComponent(near.entity))
             {

@@ -58,5 +58,13 @@ class UnitBaker : Baker<Unit>
         {
             PrevPhi = 0
         });
+        AddComponent(entity, new CUnitParams
+        {
+            Damage = authoring.Damage,
+            FireRate = authoring.FireRate,
+            DetectDistance = 5f,
+            AttackDistance = 2f,
+            AttackTendency = 0f
+        });
     } 
 }

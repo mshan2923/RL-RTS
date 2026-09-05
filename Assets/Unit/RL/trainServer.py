@@ -11,13 +11,13 @@ import torch
 
 
 class RLConfig:
-    OBS_FORMAT = "<i5fiiffi"  # unit_id, dx, dy, delta selfHp, targetHp, alive, InAttackRange, distToEdge, reward, done
+    OBS_FORMAT = "<i5fiifffi"  # unit_id, dx, dy, delta selfHp, targetHp, alive, InAttackRange, distToEdge, AttackTendency, reward, done
     OBS_SIZE = struct.calcsize(OBS_FORMAT)
 
     ACTION_FORMAT = "<ii"  # unit_id, action_index
     ACTION_SIZE = struct.calcsize(ACTION_FORMAT)
 
-    OBS_SHAPE = (7,)   # dx, dy, dalta, selfHp, targetHp, in_attack_range, distToEdge
+    OBS_SHAPE = (8,)   # dx, dy, dalta, selfHp, targetHp, in_attack_range, distToEdge, AttackTendency(추가)
     NUM_ACTIONS = 3    # Move, Stop, Attack, Action
 
     OBS_LOW, OBS_HIGH = -1.0, 1.0
@@ -25,10 +25,10 @@ class RLConfig:
     @staticmethod
     def unpack_observation(data_bytes, offset):
         raw = struct.unpack(RLConfig.OBS_FORMAT, data_bytes[offset:offset + RLConfig.OBS_SIZE])
-        unit_id, dx, dy, delta, self_hp, target_hp, alive, in_attack_range, distToEdge, reward, done = raw
+        unit_id, dx, dy, delta, self_hp, target_hp, alive, in_attack_range, distToEdge, attack_tendency, reward, done = raw
         return {
             "unit_id": unit_id,
-            "obs_vector": [dx, dy, delta, self_hp, target_hp, in_attack_range, distToEdge],  # 관측 벡터에도 추가해야 함
+            "obs_vector": [dx, dy, delta, self_hp, target_hp, in_attack_range, distToEdge, attack_tendency],  # 관측 벡터에도 추가해야 함
             "alive": bool(alive),
             "reward": reward,
             "done": bool(done)

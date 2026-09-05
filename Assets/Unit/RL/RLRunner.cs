@@ -33,6 +33,7 @@ public class RLRunner : MonoBehaviour
             inferenceRunner = new OnnxInferenceRunner<UnitState>(model); // 예시
 
         unitQuery = BuildQuery();
+        RewardCalculator.Config = rLManager.PhiConfig;
 
         try
         {
@@ -64,50 +65,71 @@ public class RLRunner : MonoBehaviour
             var healthArray = unitQuery.ToComponentDataArray<CHealth>(Allocator.TempJob);
             var nearTargetArray = unitQuery.ToComponentDataArray<CNearTarget>(Allocator.TempJob);
 
+            var AllyTendency = rLManager.AllyData.AttackTendency;
+            var EnmyTendency = rLManager.EnmyData.AttackTendency;
+
             int count = entities.Length;
             EnsureArrays(count);
 
+            // 1단계: Observation 생성 및 보상 계산
             for (int i = 0; i < count; i++)
             {
                 var result = ObservationBuilder.Build(
                     i, entities[i], transArray[i].Position, healthArray[i],
                     nearTargetArray[i].entity, em, rLManager);
 
-                // target Prev 갱신 (기존 코드)
-                if (em.Exists(nearTargetArray[i].entity))
-                {
-                    var targetHealth = em.GetComponentData<CHealth>(nearTargetArray[i].entity);
-                    targetHealth.Prev = targetHealth.Current;
-                    em.SetComponentData(nearTargetArray[i].entity, targetHealth);
-                }
-
-                // self HP Prev 갱신 (이전에 고친 부분)
-                var selfHealthCurrent = healthArray[i];
-                selfHealthCurrent.Prev = selfHealthCurrent.Current;
-                em.SetComponentData(entities[i], selfHealthCurrent);
-
-                // PrevPhi 갱신 (새로 추가)
-                if (!result.isOutOfPerception)
-                {
-                    var shaping = em.GetComponentData<CRLShaping>(entities[i]);
-                    shaping.PrevPhi = result.currentPhi;
-                    em.SetComponentData(entities[i], shaping);
-                }
+                // PrevPhi는 인지 범위와 상관없이 항시 currentPhi로 맞춰줘야 델타 오염이 안 생겨
+                var shaping = em.GetComponentData<CRLShaping>(entities[i]);
+                shaping.PrevPhi = result.currentPhi;
+                em.SetComponentData(entities[i], shaping);
 
                 var obs = result.obs;
 
-                if (float.IsNaN(obs.dx) || float.IsInfinity(obs.dx) ||
-                    float.IsNaN(obs.selfHp) || float.IsInfinity(obs.selfHp) ||
-                    float.IsNaN(obs.distToEdge) || float.IsInfinity(obs.distToEdge) ||
-                    float.IsNaN(obs.delta) || float.IsInfinity(obs.delta))
+                if (float.IsNaN(obs.dx) || float.IsNaN(obs.selfHp) || float.IsNaN(obs.delta))
                 {
-                    Debug.LogError($"[NaN 감지] unit={obs.unit_id}, dx={obs.dx}, selfHp={obs.selfHp}, distToEdge={obs.distToEdge}, delta={obs.delta}");
+                    Debug.LogError($"[NaN 감지] unit={obs.unit_id}, dx={obs.dx}, selfHp={obs.selfHp}, delta={obs.delta}");
                 }
 
                 if (mode == RunMode.Training)
+                {
                     obs = RewardCalculator.Apply(obs, result.isOutOfPerception, result.attackDistNormalized);
+                }
+                else
+                {
+                    if (rLManager.TendencyForEach)
+                    {
+                        var unitParams = em.GetComponentData<CUnitParams>(entities[i]);
+                        obs.AttackTendency = unitParams.AttackTendency;
+                    }
+                    else
+                    {
+                        var team = em.GetComponentData<UnitEnumComponent>(entities[i]).type;
+                        obs.AttackTendency = team == UnitEnum.Ally ? AllyTendency : EnmyTendency;
+                    }
+                }
                 
                 obsArray[i] = obs;
+            }
+
+            // 2단계: 관측이 전부 끝난 후, Prev 체력 일괄 갱신 (중복 참조 오염 방지)
+            for (int i = 0; i < count; i++)
+            {
+                var selfHealthCurrent = healthArray[i];
+                selfHealthCurrent.Prev = selfHealthCurrent.Current;
+                em.SetComponentData(entities[i], selfHealthCurrent);
+            }
+
+            if (count > 0)
+            {
+                if (mode == RunMode.Training)
+                    await trainingPolicy.UpdateTrainingAsync(obsArray, actionArray);
+                else
+                    await inferenceRunner.InferAsync(obsArray, actionArray);
+
+                token.ThrowIfCancellationRequested();
+                
+                // 기존 entities 배열 그대로 전달
+                ApplyActions(entities, count);
             }
 
             entities.Dispose();
@@ -115,38 +137,24 @@ public class RLRunner : MonoBehaviour
             healthArray.Dispose();
             nearTargetArray.Dispose();
 
-            if (count > 0)
-            {
-                if (mode == RunMode.Training)
-                    await trainingPolicy.UpdateTrainingAsync(obsArray, actionArray);
-                else
-                    await inferenceRunner.InferAsync(obsArray, actionArray); // 동기 or 비동기, ONNX 러너 시그니처에 맞춰
-
-                token.ThrowIfCancellationRequested();
-                ApplyActions();
-            }
-
             await Awaitable.NextFrameAsync();
         }
     }
 
-    void ApplyActions()
+    void ApplyActions(NativeArray<Entity> entities, int count)
     {
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
-        var entities = unitQuery.ToEntityArray(Allocator.TempJob);
 
-        for (int i = 0; i < entities.Length; i++)
+        for (int i = 0; i < count; i++)
         {
-            
             em.SetComponentData(entities[i], new CUnitState
             {
                 Debug = "RL Runner.cs",
                 unitState = (UnitState)actionArray[i].action_index
             });
         }
-
-        entities.Dispose();
     }
+
 
     void EnsureArrays(int count)
     {
@@ -166,7 +174,7 @@ public class RLRunner : MonoBehaviour
     {
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
         var build = new EntityQueryBuilder(Allocator.Temp)
-            .WithAll<CHealth, CNearTarget, LocalTransform>()
+            .WithAll<CHealth, CNearTarget, LocalTransform , CUnitParams>()
             .WithOptions(EntityQueryOptions.IncludeDisabledEntities);
         var query = em.CreateEntityQuery(build);
         build.Dispose();
