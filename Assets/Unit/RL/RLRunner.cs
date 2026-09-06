@@ -65,9 +65,6 @@ public class RLRunner : MonoBehaviour
             var healthArray = unitQuery.ToComponentDataArray<CHealth>(Allocator.TempJob);
             var nearTargetArray = unitQuery.ToComponentDataArray<CNearTarget>(Allocator.TempJob);
 
-            var AllyTendency = rLManager.AllyData.AttackTendency;
-            var EnmyTendency = rLManager.EnmyData.AttackTendency;
-
             int count = entities.Length;
             EnsureArrays(count);
 
@@ -106,19 +103,6 @@ public class RLRunner : MonoBehaviour
                 if (mode == RunMode.Training)
                 {
                     obs = RewardCalculator.Apply(obs, result.isOutOfPerception, result.attackDistNormalized);
-                }
-                else
-                {
-                    if (rLManager.TendencyForEach)
-                    {
-                        var unitParams = em.GetComponentData<CUnitParams>(entities[i]);
-                        obs.AttackTendency = unitParams.AttackTendency;
-                    }
-                    else
-                    {
-                        var team = em.GetComponentData<UnitEnumComponent>(entities[i]).type;
-                        obs.AttackTendency = team == UnitEnum.Ally ? AllyTendency : EnmyTendency;
-                    }
                 }
                 
                 obsArray[i] = obs;

@@ -22,7 +22,6 @@ public static class ObservationBuilder
         float distToEdge = math.min(distToEdgeX, distToEdgeZ);
 
         var shaping = em.GetComponentData<CRLShaping>(entity);
-        var Parms = em.GetComponentData<CUnitParams>(entity);
 
         // 타겟 없음 (랜덤 폴백 제거된 상태 기준)
         if (target == Entity.Null || !em.Exists(target))
@@ -39,7 +38,6 @@ public static class ObservationBuilder
                 targetHp = 0f,
                 InAttackRange = 0,
                 distToEdge = distToEdge,
-                AttackTendency = Parms.AttackTendency,
                 alive = em.IsEnabled(entity) ? 1 : 0,
                 reward = 0f,
                 done = selfHealth.Current > 0 ? 0 : 1
@@ -76,7 +74,7 @@ public static class ObservationBuilder
         var dxy = (targetPos - selfPos) / detectDistance;
         var attackDistNormalized = math.length((targetPos - selfPos) / attackDistance);
 
-        // 공격성(AttackTendency)이 phi의 목표 거리 자체를 이동시킴 -> 높으면 근접, 낮으면 후퇴 위치 유지
+        // 공격성 없이 AttackDistance를 목표 거리로 사용
         float currentPhi = RewardCalculator.ComputePhi(actualDist, detectDistance, attackDistance, distToEdge);
         float delta = currentPhi - shaping.PrevPhi;
 
@@ -93,7 +91,6 @@ public static class ObservationBuilder
             targetHp = (targetHealth.Prev - targetHealth.Current) / targetMax,
             InAttackRange = actualDist < attackDistance ? 1 : 0,
             distToEdge = distToEdge,
-            AttackTendency = Parms.AttackTendency,
             alive = em.IsEnabled(entity) ? 1 : 0,
             reward = 0f,
             done = selfHealth.Current > 0 ? 0 : 1

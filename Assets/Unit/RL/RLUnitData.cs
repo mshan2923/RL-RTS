@@ -5,7 +5,7 @@ using UnityEngine;
 
 public static class RLConstants
 {
-    public const int OBS_DIM = 8; // dx, dy, delta, selfHp, targetHp, InAttackRange, distToEdge , AttackTendency(추가)
+    public const int OBS_DIM = 7; // dx, dy, delta, selfHp, targetHp, InAttackRange, distToEdge
     public const int NUM_ACTIONS = 3; // MoveToward, HoldPosition, Retreat
 }
 
@@ -19,7 +19,6 @@ public struct CObservation : IComponentData
     public int alive;
     public int InAttackRange;
     public float distToEdge;
-    public float AttackTendency; 
     public float reward;
     public int done;
 }
