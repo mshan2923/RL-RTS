@@ -35,7 +35,7 @@ public class RLManager : MonoBehaviour
         /// 공격 성향
         /// </summary>
         [Range(-1 ,1)]// Tooltip("공격 성향")
-        public float AttackTendency;
+        public int AttackTendency;
     }
 
     void Start()
@@ -80,6 +80,7 @@ public class RLManager : MonoBehaviour
             {
                 Damage = data.Damager,
                 FireRate = data.FireRate,
+                MaxHealth = data.Health,
                 DetectDistance = data.DetectDistance,
                 AttackDistance = data.AttackDistance,
                 AttackTendency = data.AttackTendency

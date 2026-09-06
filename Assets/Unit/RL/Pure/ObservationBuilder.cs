@@ -10,18 +10,43 @@ public static class ObservationBuilder
         public CObservation obs;
         public bool isOutOfPerception;
         public float attackDistNormalized;
+        public float desiredDistanceNormalized;
         public float currentPhi;
     }
 
     public static BuildResult Build(
         int unitIndex, Entity entity, float3 selfPos,
-        CHealth selfHealth, Entity target, EntityManager em, RLManager rLManager)
+        CHealth selfHealth, Entity target, EntityManager em, RLManager rLManager,
+        bool useHealthBasedTendency)
     {
         float distToEdgeX = math.min(selfPos.x, rLManager.Size.x - selfPos.x) / (rLManager.Size.x / 2f);
         float distToEdgeZ = math.min(selfPos.z, rLManager.Size.y - selfPos.z) / (rLManager.Size.y / 2f);
         float distToEdge = math.min(distToEdgeX, distToEdgeZ);
 
         var shaping = em.GetComponentData<CRLShaping>(entity);
+        float attackTendency;
+
+        if (useHealthBasedTendency)
+        {
+            // TendencyForEach selects a discrete tendency from the unit's current health.
+            float healthRatio = selfHealth.Max > 0f
+                ? math.saturate(selfHealth.Current / selfHealth.Max)
+                : 0f;
+            attackTendency = AttackTendencyUtility.FromHealthRatio(healthRatio);
+        }
+        else
+        {
+            // Otherwise use the team-level Inspector setting.
+            var selfTeam = em.GetComponentData<UnitEnumComponent>(entity);
+            attackTendency = selfTeam.type == UnitEnum.Ally
+                ? rLManager.AllyData.AttackTendency
+                : rLManager.EnmyData.AttackTendency;
+        }
+
+        if (!AttackTendencyUtility.IsValid(attackTendency))
+        {
+            Debug.LogError($"[AttackTendency] Expected -1, 0, or +1, but received {attackTendency} for unit {unitIndex}. The value is passed through unchanged.");
+        }
 
         // 타겟 없음 (랜덤 폴백 제거된 상태 기준)
         if (target == Entity.Null || !em.Exists(target))
@@ -38,11 +63,19 @@ public static class ObservationBuilder
                 targetHp = 0f,
                 InAttackRange = 0,
                 distToEdge = distToEdge,
+                AttackTendency = attackTendency,
                 alive = em.IsEnabled(entity) ? 1 : 0,
                 reward = 0f,
                 done = selfHealth.Current > 0 ? 0 : 1
             };
-            return new BuildResult { obs = obs, isOutOfPerception = true, attackDistNormalized = 0f, currentPhi = phiNoTarget };
+            return new BuildResult
+            {
+                obs = obs,
+                isOutOfPerception = true,
+                attackDistNormalized = 0f,
+                desiredDistanceNormalized = 0f,
+                currentPhi = phiNoTarget
+            };
         }
 
         float detectDistance = 0.0001f;
@@ -74,9 +107,41 @@ public static class ObservationBuilder
         var dxy = (targetPos - selfPos) / detectDistance;
         var attackDistNormalized = math.length((targetPos - selfPos) / attackDistance);
 
-        // 공격성 없이 AttackDistance를 목표 거리로 사용
-        float currentPhi = RewardCalculator.ComputePhi(actualDist, detectDistance, attackDistance, distToEdge);
+        float tendency01 = math.saturate((attackTendency + 1f) * 0.5f);
+        float desiredDistance;
+
+        if (tendency01 < 0.5f)
+        {
+            // 공격성 -1 ~ 0: 인지거리 바깥 -> 공격거리
+            float t = tendency01 * 2f;
+            desiredDistance = math.lerp(detectDistance * 1.2f, attackDistance, t);
+        }
+        else
+        {
+            // 공격성 0 ~ +1: 공격거리 -> 완전 근접
+            float t = (tendency01 - 0.5f) * 2f;
+            desiredDistance = math.lerp(attackDistance, 0f, t);
+        }
+        float desiredDistanceNormalized = desiredDistance / attackDistance;
+
+        // This exact desired distance is shared with ComputePhi: -1 ranged, 0 attack distance, +1 melee.
+        float currentPhi = RewardCalculator.ComputePhi(
+            actualDist,
+            desiredDistance,
+            detectDistance,
+            distToEdge);
         float delta = currentPhi - shaping.PrevPhi;
+
+        if (unitIndex == 0)
+        {
+            Debug.Log(
+                $"[PHI] actual={actualDist:F2}, " +
+                $"desired={desiredDistance:F2}, " +
+                $"phi={currentPhi:F3}, " +
+                $"prev={shaping.PrevPhi:F3}, " +
+                $"delta={delta:F3}, " +
+                $"tendency={attackTendency:F2}");
+        }
 
         float selfMax = math.max(selfHealth.Max, 1f);
         float targetMax = math.max(targetHealth.Max, 1f);
@@ -91,11 +156,19 @@ public static class ObservationBuilder
             targetHp = (targetHealth.Prev - targetHealth.Current) / targetMax,
             InAttackRange = actualDist < attackDistance ? 1 : 0,
             distToEdge = distToEdge,
+            AttackTendency = attackTendency,
             alive = em.IsEnabled(entity) ? 1 : 0,
             reward = 0f,
             done = selfHealth.Current > 0 ? 0 : 1
         };
 
-        return new BuildResult { obs = result, isOutOfPerception = isOutOfPerception, attackDistNormalized = attackDistNormalized, currentPhi = currentPhi };
+        return new BuildResult
+        {
+            obs = result,
+            isOutOfPerception = isOutOfPerception,
+            attackDistNormalized = attackDistNormalized,
+            desiredDistanceNormalized = desiredDistanceNormalized,
+            currentPhi = currentPhi
+        };
     }
 }

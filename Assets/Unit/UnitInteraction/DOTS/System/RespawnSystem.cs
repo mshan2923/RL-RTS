@@ -9,6 +9,7 @@ partial struct RespawnSystem : ISystem
 {
     EntityQuery respawnParamQuery;
     Random random;
+    EntityQuery unitParmQuery;
 
     // [BurstCompile]
     public void OnCreate(ref SystemState state)
@@ -17,7 +18,10 @@ partial struct RespawnSystem : ISystem
         build.WithAll<RLParmCompoenent>();
         respawnParamQuery = build.Build(ref state);
 
-        random = new Random((uint)System.DateTime.Now.Ticks); // 최초 1회만 시드 생성
+        var seed = (uint)System.DateTime.UtcNow.Ticks;
+        random = new Random(seed == 0 ? 1u : seed); // Random requires a non-zero seed.
+
+        unitParmQuery = DOTS_Mecro.UnitParmQuery(state.EntityManager);
     }
 
     [BurstCompile]
@@ -32,6 +36,9 @@ partial struct RespawnSystem : ISystem
         //     foreach (var p in paramArray)
         //         paramMap.TryAdd(new UnitEnumComponent { type = p.TeamType }, p);
         // }
+        var unitParamMap = new NativeHashMap<UnitEnumComponent, CUnitParams>(2, Allocator.TempJob);
+        DOTS_Mecro.GetUnitParm(unitParmQuery, ref unitParamMap);
+        
 
         var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>()
             .CreateCommandBuffer(state.WorldUnmanaged).AsParallelWriter();
@@ -42,10 +49,14 @@ partial struct RespawnSystem : ISystem
             ecb = ecb
         }.ScheduleParallel(state.Dependency);
 
+        var jobSeed = random.NextUInt();
+        if (jobSeed == 0) jobSeed = 1u;
+
         var job = new RespawnJob
         {
             // paramMap = paramMap,
-            random = random,
+            pairs = unitParamMap.AsReadOnly(),
+            random = new Random(jobSeed),
             ecb = ecb,
             unitPrefab = color,
             rLMapSetting = mapSetting
@@ -56,6 +67,8 @@ partial struct RespawnSystem : ISystem
 
         // 다음 프레임을 위해 랜덤 상태 진행 (job 안에서 값 복사로 쓰였으니 여기서 한 번 더 굴려줌)
         random.NextUInt();
+
+        unitParamMap.Dispose(state.Dependency);
     }
 
     [BurstCompile]
@@ -78,7 +91,8 @@ partial struct RespawnSystem : ISystem
     [WithAll(typeof(UnitRespawnTag))]
     public partial struct RespawnJob : IJobEntity
     {
-        // [ReadOnly] public NativeHashMap<UnitEnumComponent, RLParmCompoenent> paramMap;
+        public NativeHashMap<UnitEnumComponent, CUnitParams>.ReadOnly pairs;
+
         public Random random;
         public EntityCommandBuffer.ParallelWriter ecb;
 
@@ -87,9 +101,9 @@ partial struct RespawnSystem : ISystem
         public RLMapSetting rLMapSetting;
 
         public void Execute([EntityIndexInQuery] int index, Entity entity,
-            ref LocalTransform transform, ref MoveTargetComponent moveTo, in UnitEnumComponent team, in UnitRespawnTag tag, in CHealth health, ref CUnitParams unitParams)
+            ref LocalTransform transform, ref MoveTargetComponent moveTo, in UnitEnumComponent team, in UnitRespawnTag tag, in CHealth health)
         {
-            // if (!paramMap.TryGetValue(team, out var rLParm)) return;
+            if (!pairs.TryGetValue(team, out var unitParams)) return;
 
             var size = new float3(rLMapSetting.Size.x, 0, rLMapSetting.Size.y);
             var offset = new float3(rLMapSetting.SpawnRandomOffset, 0, rLMapSetting.SpawnRandomOffset);
@@ -104,13 +118,11 @@ partial struct RespawnSystem : ISystem
             ecb.SetComponentEnabled<UnitRespawnTag>(index, entity, false);
 
             var result = health;
-            result.Prev = result.Max;
-            result.Current = result.Max;
+            result.Prev = unitParams.MaxHealth;
+            result.Current = unitParams.MaxHealth;
+            result.Max = unitParams.MaxHealth;
 
             ecb.SetComponent<CHealth>(index, entity, result);
-
-            //! 유닛별 공격성 - CUnitParams . AttackTendency
-            unitParams.AttackTendency = random.NextFloat(-1f, 1f);
 
             switch (team.type)
             {

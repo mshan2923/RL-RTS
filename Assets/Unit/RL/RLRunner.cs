@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text;
 using System.Threading;
 using RL_StepByStep;
 using Unity.Collections;
@@ -13,6 +14,7 @@ public class RLRunner : MonoBehaviour
     public RLManager rLManager;
     public ModelAsset model;
     public RunMode mode; // Training / Inference
+    public bool LogInferenceOutputs;
 
     PythonTrainingPolicy<CObservation, CActionData> trainingPolicy; // Training 전용
     OnnxInferenceRunner<UnitState> inferenceRunner; // Inference 전용, 기존 InferenceRunner 재사용
@@ -23,6 +25,10 @@ public class RLRunner : MonoBehaviour
 
     CancellationTokenSource cts;
 
+    int debugFrame;
+const int DebugLogInterval = 30;
+
+
     async void Start()
     {
         cts = new CancellationTokenSource();
@@ -30,7 +36,12 @@ public class RLRunner : MonoBehaviour
         if (mode == RunMode.Training)
             trainingPolicy = new PythonTrainingPolicy<CObservation, CActionData>("127.0.0.1", 5555);
         else
+        {
             inferenceRunner = new OnnxInferenceRunner<UnitState>(model); // 예시
+
+        }
+        if (inferenceRunner != null)
+            inferenceRunner.EnableDebugLogging = LogInferenceOutputs;
 
         unitQuery = BuildQuery();
         RewardCalculator.Config = rLManager.PhiConfig;
@@ -73,7 +84,8 @@ public class RLRunner : MonoBehaviour
             {
                 var result = ObservationBuilder.Build(
                     i, entities[i], transArray[i].Position, healthArray[i],
-                    nearTargetArray[i].entity, em, rLManager);
+                    nearTargetArray[i].entity, em, rLManager,
+                    mode == RunMode.Training || rLManager.TendencyForEach);
 
                 // PrevPhi는 인지 범위와 상관없이 항시 currentPhi로 맞춰줘야 델타 오염이 안 생겨
                 {
@@ -102,7 +114,11 @@ public class RLRunner : MonoBehaviour
 
                 if (mode == RunMode.Training)
                 {
-                    obs = RewardCalculator.Apply(obs, result.isOutOfPerception, result.attackDistNormalized);
+                    obs = RewardCalculator.Apply(
+                        obs,
+                        result.isOutOfPerception,
+                        result.attackDistNormalized,
+                        result.desiredDistanceNormalized);
                 }
                 
                 obsArray[i] = obs;
@@ -127,6 +143,8 @@ public class RLRunner : MonoBehaviour
                 
                 // 기존 entities 배열 그대로 전달
                 ApplyActions(entities, count);
+
+                LogRlSnapshot(entities, count);
             }
 
             entities.Dispose();
@@ -141,13 +159,41 @@ public class RLRunner : MonoBehaviour
     void ApplyActions(NativeArray<Entity> entities, int count)
     {
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
-
+    
         for (int i = 0; i < count; i++)
         {
+            var entity = entities[i];
+            var selectedAction =
+                (UnitState)actionArray[i].action_index;
+
+            if (mode == RunMode.Inference &&
+                TryGetDistanceState(
+                    entity,
+                    obsArray[i].AttackTendency,
+                    out float actualDistance,
+                    out float desiredDistance))
+            {
+                const float DeadZone = 0.25f;
+                const float Hysteresis = 0.5f;
+
+                float error =
+                    math.abs(actualDistance - desiredDistance);
+
+                var previousState =
+                    em.GetComponentData<CUnitState>(entity).unitState;
+
+                if (error <= DeadZone ||
+                    (previousState == UnitState.HoldPosition &&
+                    error <= Hysteresis))
+                {
+                    selectedAction = UnitState.HoldPosition;
+                }
+            }
+
             em.SetComponentData(entities[i], new CUnitState
             {
                 Debug = "RL Runner.cs",
-                unitState = (UnitState)actionArray[i].action_index
+                unitState = selectedAction
             });
         }
     }
@@ -171,7 +217,7 @@ public class RLRunner : MonoBehaviour
     {
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
         var build = new EntityQueryBuilder(Allocator.Temp)
-            .WithAll<CHealth, CNearTarget, LocalTransform , CUnitParams>()
+            .WithAll<CHealth, CNearTarget, LocalTransform>()
             .WithOptions(EntityQueryOptions.IncludeDisabledEntities);
         var query = em.CreateEntityQuery(build);
         build.Dispose();
@@ -190,6 +236,115 @@ public class RLRunner : MonoBehaviour
     {
         cts?.Cancel();
         // DisposeResources()는 Start()의 finally에서 호출되므로 여기서 다시 부르지 않음
+    }
+
+    void LogRlSnapshot(NativeArray<Entity> entities, int count)
+    {
+        var em = World.DefaultGameObjectInjectionWorld.EntityManager;
+        debugFrame++;
+
+        bool hasDamage = false;
+
+        for (int i = 0; i < count; i++)
+        {
+            if (obsArray[i].targetHp > 0f)
+            {
+                hasDamage = true;
+                break;
+            }
+        }
+
+        if (debugFrame % DebugLogInterval != 0 && !hasDamage)
+            return;
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine(
+            $"[RL Snapshot] frame={debugFrame}, mode={mode}, units={count}");
+
+        for (int i = 0; i < count; i++)
+        {
+            var o = obsArray[i];
+            var action = (UnitState)actionArray[i].action_index;
+
+            bool canAttack =
+                em.IsComponentEnabled<CanToAttackTag>(entities[i]);
+
+            sb.AppendLine(
+                $"unit={i} " +
+                $"tendency={o.AttackTendency:F2} " +
+                $"dx={o.dx:F2} dy={o.dy:F2} " +
+                $"delta={o.delta:F3} " +
+                $"inRange={o.InAttackRange} " +
+                $"canAttack={canAttack} " +
+                $"selfDmg={o.selfHp:F2} " +
+                $"targetDmg={o.targetHp:F2} " +
+                $"reward={o.reward:F3} " +
+                $"action={action}({actionArray[i].action_index})");
+        }
+
+        Debug.Log(sb.ToString());
+    }
+
+    bool TryGetDistanceState(
+    Entity entity,
+    float attackTendency,
+    out float actualDistance,
+    out float desiredDistance)
+    {
+        actualDistance = 0f;
+        desiredDistance = 0f;
+
+        var em = World.DefaultGameObjectInjectionWorld.EntityManager;
+        var target = em.GetComponentData<CNearTarget>(entity).entity;
+
+        if (target == Entity.Null || !em.Exists(target))
+            return false;
+
+        var selfPos =
+            em.GetComponentData<LocalTransform>(entity).Position;
+
+        var targetPos =
+            em.GetComponentData<LocalTransform>(target).Position;
+
+        actualDistance =
+            math.distance(selfPos, targetPos);
+
+        var targetTeam =
+            em.GetComponentData<UnitEnumComponent>(target).type;
+
+        float detectDistance;
+        float attackDistance;
+        if (targetTeam == UnitEnum.Enmy)
+        {
+            detectDistance = rLManager.EnmyData.DetectDistance;
+            attackDistance = rLManager.EnmyData.AttackDistance;
+        }
+        else
+        {
+            detectDistance = rLManager.AllyData.DetectDistance;
+            attackDistance = rLManager.AllyData.AttackDistance;
+        }
+
+        float t =
+            math.saturate(( attackTendency + 1f) * 0.5f);
+
+        if (t < 0.5f)
+        {
+            desiredDistance = math.lerp(
+                detectDistance * 1.2f,
+                attackDistance,
+                t * 2f);
+        }
+        else
+        {
+            desiredDistance = math.lerp(
+                attackDistance,
+                0f,
+                (t - 0.5f) * 2f);
+        }
+
+        return true;
     }
 }
 

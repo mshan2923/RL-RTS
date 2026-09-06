@@ -83,6 +83,8 @@ partial struct RLExecuteSystem : ISystem
             var rot = quaternion.RotateY(math.radians(jitterDeg));
             var jitteredDir = math.mul(rot, dir);
 
+            
+
             switch (unitState.unitState)
             {
                 case UnitState.MoveToward:
@@ -104,8 +106,15 @@ partial struct RLExecuteSystem : ISystem
                 math.clamp(moveTarget.MoveTo.z, 0, MapSize.y) // .y가 아니라 .z여야 함 (아래 참고)
             );
 
-            if (r2aLookup.IsComponentEnabled(Target) != (unitState.unitState == UnitState.HoldPosition))
-                ecb.SetComponentEnabled<CanToAttackTag>(index, Target, unitState.unitState == UnitState.HoldPosition);
+            if (r2aLookup.IsComponentEnabled(entity) !=
+                (unitState.unitState == UnitState.HoldPosition))
+            {
+                ecb.SetComponentEnabled<CanToAttackTag>(
+                    index,
+                    entity,
+                    unitState.unitState == UnitState.HoldPosition
+                );
+            }
         }
     }
 }

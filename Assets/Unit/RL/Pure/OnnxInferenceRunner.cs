@@ -13,6 +13,8 @@ public class OnnxInferenceRunner<action> where action : Enum
     Model runtimeModel;
     Worker worker;
 
+    public bool EnableDebugLogging { get; set; }
+
     int actionAmount = Enum.GetNames(typeof(action)).Length;
 
     public OnnxInferenceRunner(ModelAsset modelAsset)
@@ -56,6 +58,10 @@ public class OnnxInferenceRunner<action> where action : Enum
             }
 
             actionArray[i] = new CActionData { action_index = bestAction };
+
+            if (EnableDebugLogging)
+                Debug.Log($"[ONNX] unit={i} input[7] tendency={obsArray[i].AttackTendency:F1} logits=" +
+                    $"[{outputTensor[i, 0]:F3}, {outputTensor[i, 1]:F3}, {outputTensor[i, 2]:F3}] action={bestAction}");
         }
     }
 
@@ -103,6 +109,10 @@ public class OnnxInferenceRunner<action> where action : Enum
             }
 
             actionArray[i] = new CActionData { action_index = bestAction };
+
+            if (EnableDebugLogging)
+                Debug.Log($"[ONNX] unit={i} input[7] tendency={obsArray[i].AttackTendency:F1} logits=" +
+                    $"[{result[i, 0]:F3}, {result[i, 1]:F3}, {result[i, 2]:F3}] action={bestAction}");
         }
     }
 
