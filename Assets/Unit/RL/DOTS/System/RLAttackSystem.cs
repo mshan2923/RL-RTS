@@ -80,7 +80,7 @@ partial struct RLAttackSystem : ISystem
         }
     }
 
-    // [BurstCompile]
+    [BurstCompile]
     [WithAll(typeof(ReadyToShotTag))]
     public partial struct AttackJob : IJobEntity
     {
@@ -106,15 +106,6 @@ partial struct RLAttackSystem : ISystem
                 var targetHp = hpLookup[near.entity];
                 targetHp.Current -= unitParm.Damage;
                 ecb.SetComponent(index, near.entity, targetHp);
-
-
-                Debug.Log(
-                    $"[ATTACK] attacker={entity.Index}, " +
-                    $"target={near.entity.Index}, " +
-                    $"targetPrev={targetHp.Prev:F2}, " +
-                    $"targetCurrent={targetHp.Current:F2}, " +
-                    $"damage={unitParm.Damage}"
-                );
             }
 
             ecb.SetComponentEnabled<ReadyToShotTag>(index, entity, false);

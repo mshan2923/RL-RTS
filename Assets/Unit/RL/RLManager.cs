@@ -35,7 +35,7 @@ public class RLManager : MonoBehaviour
         /// 공격 성향
         /// </summary>
         [Range(-1 ,1)]// Tooltip("공격 성향")
-        public float AttackTendency;
+        public int AttackTendency;
     }
 
     void Start()

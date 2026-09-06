@@ -18,7 +18,8 @@ partial struct RespawnSystem : ISystem
         build.WithAll<RLParmCompoenent>();
         respawnParamQuery = build.Build(ref state);
 
-        random = new Random((uint)System.DateTime.Now.Ticks); // 최초 1회만 시드 생성
+        var seed = (uint)System.DateTime.UtcNow.Ticks;
+        random = new Random(seed == 0 ? 1u : seed); // Random requires a non-zero seed.
 
         unitParmQuery = DOTS_Mecro.UnitParmQuery(state.EntityManager);
     }
@@ -48,11 +49,14 @@ partial struct RespawnSystem : ISystem
             ecb = ecb
         }.ScheduleParallel(state.Dependency);
 
+        var jobSeed = random.NextUInt();
+        if (jobSeed == 0) jobSeed = 1u;
+
         var job = new RespawnJob
         {
             // paramMap = paramMap,
             pairs = unitParamMap.AsReadOnly(),
-            random = random,
+            random = new Random(jobSeed),
             ecb = ecb,
             unitPrefab = color,
             rLMapSetting = mapSetting
@@ -97,7 +101,7 @@ partial struct RespawnSystem : ISystem
         public RLMapSetting rLMapSetting;
 
         public void Execute([EntityIndexInQuery] int index, Entity entity,
-            ref LocalTransform transform, ref MoveTargetComponent moveTo, in UnitEnumComponent team, in UnitRespawnTag tag, in CHealth health, ref CAttackTendency tendency)
+            ref LocalTransform transform, ref MoveTargetComponent moveTo, in UnitEnumComponent team, in UnitRespawnTag tag, in CHealth health)
         {
             if (!pairs.TryGetValue(team, out var unitParams)) return;
 
@@ -120,8 +124,6 @@ partial struct RespawnSystem : ISystem
 
             ecb.SetComponent<CHealth>(index, entity, result);
 
-            tendency.Value =  random.NextFloat(-1f, 1f) * 0f;
-            
             switch (team.type)
             {
                 case UnitEnum.Nature:

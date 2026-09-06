@@ -16,26 +16,36 @@ public static class ObservationBuilder
 
     public static BuildResult Build(
         int unitIndex, Entity entity, float3 selfPos,
-        CHealth selfHealth, Entity target, EntityManager em, RLManager rLManager)
+        CHealth selfHealth, Entity target, EntityManager em, RLManager rLManager,
+        bool useHealthBasedTendency)
     {
         float distToEdgeX = math.min(selfPos.x, rLManager.Size.x - selfPos.x) / (rLManager.Size.x / 2f);
         float distToEdgeZ = math.min(selfPos.z, rLManager.Size.y - selfPos.z) / (rLManager.Size.y / 2f);
         float distToEdge = math.min(distToEdgeX, distToEdgeZ);
 
         var shaping = em.GetComponentData<CRLShaping>(entity);
-        var tendency = em.GetComponentData<CAttackTendency>(entity);
         float attackTendency;
 
-        if (rLManager.TendencyForEach)
+        if (useHealthBasedTendency)
         {
-            attackTendency = tendency.Value;
+            // TendencyForEach selects a discrete tendency from the unit's current health.
+            float healthRatio = selfHealth.Max > 0f
+                ? math.saturate(selfHealth.Current / selfHealth.Max)
+                : 0f;
+            attackTendency = AttackTendencyUtility.FromHealthRatio(healthRatio);
         }
         else
         {
+            // Otherwise use the team-level Inspector setting.
             var selfTeam = em.GetComponentData<UnitEnumComponent>(entity);
             attackTendency = selfTeam.type == UnitEnum.Ally
                 ? rLManager.AllyData.AttackTendency
                 : rLManager.EnmyData.AttackTendency;
+        }
+
+        if (!AttackTendencyUtility.IsValid(attackTendency))
+        {
+            Debug.LogError($"[AttackTendency] Expected -1, 0, or +1, but received {attackTendency} for unit {unitIndex}. The value is passed through unchanged.");
         }
 
         // 타겟 없음 (랜덤 폴백 제거된 상태 기준)
@@ -97,7 +107,7 @@ public static class ObservationBuilder
         var dxy = (targetPos - selfPos) / detectDistance;
         var attackDistNormalized = math.length((targetPos - selfPos) / attackDistance);
 
-        float tendency01 = math.saturate(( attackTendency + 1f) * 0.5f);
+        float tendency01 = math.saturate((attackTendency + 1f) * 0.5f);
         float desiredDistance;
 
         if (tendency01 < 0.5f)
@@ -114,7 +124,7 @@ public static class ObservationBuilder
         }
         float desiredDistanceNormalized = desiredDistance / attackDistance;
 
-        // 공격성(AttackTendency)이 phi의 목표 거리 자체를 이동시킴 -> 높으면 근접, 낮으면 후퇴 위치 유지
+        // This exact desired distance is shared with ComputePhi: -1 ranged, 0 attack distance, +1 melee.
         float currentPhi = RewardCalculator.ComputePhi(
             actualDist,
             desiredDistance,

@@ -14,6 +14,7 @@ public class RLRunner : MonoBehaviour
     public RLManager rLManager;
     public ModelAsset model;
     public RunMode mode; // Training / Inference
+    public bool LogInferenceOutputs;
 
     PythonTrainingPolicy<CObservation, CActionData> trainingPolicy; // Training 전용
     OnnxInferenceRunner<UnitState> inferenceRunner; // Inference 전용, 기존 InferenceRunner 재사용
@@ -35,7 +36,12 @@ const int DebugLogInterval = 30;
         if (mode == RunMode.Training)
             trainingPolicy = new PythonTrainingPolicy<CObservation, CActionData>("127.0.0.1", 5555);
         else
+        {
             inferenceRunner = new OnnxInferenceRunner<UnitState>(model); // 예시
+
+        }
+        if (inferenceRunner != null)
+            inferenceRunner.EnableDebugLogging = LogInferenceOutputs;
 
         unitQuery = BuildQuery();
         RewardCalculator.Config = rLManager.PhiConfig;
@@ -78,7 +84,8 @@ const int DebugLogInterval = 30;
             {
                 var result = ObservationBuilder.Build(
                     i, entities[i], transArray[i].Position, healthArray[i],
-                    nearTargetArray[i].entity, em, rLManager);
+                    nearTargetArray[i].entity, em, rLManager,
+                    mode == RunMode.Training || rLManager.TendencyForEach);
 
                 // PrevPhi는 인지 범위와 상관없이 항시 currentPhi로 맞춰줘야 델타 오염이 안 생겨
                 {
@@ -308,7 +315,6 @@ const int DebugLogInterval = 30;
 
         float detectDistance;
         float attackDistance;
-
         if (targetTeam == UnitEnum.Enmy)
         {
             detectDistance = rLManager.EnmyData.DetectDistance;

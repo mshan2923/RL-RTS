@@ -63,3 +63,18 @@ public struct CRLShaping : IComponentData
   {
       public float Value;
   }
+
+public static class AttackTendencyUtility
+{
+    public static bool IsValid(float value)
+    {
+        return value == -1f || value == 0f || value == 1f;
+    }
+
+    public static float FromHealthRatio(float healthRatio)
+    {
+        if (healthRatio < 1f / 3f) return -1f;
+        if (healthRatio < 2f / 3f) return 0f;
+        return 1f;
+    }
+}
