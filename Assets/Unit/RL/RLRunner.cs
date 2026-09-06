@@ -79,9 +79,22 @@ public class RLRunner : MonoBehaviour
                     nearTargetArray[i].entity, em, rLManager);
 
                 // PrevPhi는 인지 범위와 상관없이 항시 currentPhi로 맞춰줘야 델타 오염이 안 생겨
-                var shaping = em.GetComponentData<CRLShaping>(entities[i]);
-                shaping.PrevPhi = result.currentPhi;
-                em.SetComponentData(entities[i], shaping);
+                {
+                        // RLRunner에서 PrevPhi 갱신하는 부분
+                    var shaping = em.GetComponentData<CRLShaping>(entities[i]);
+
+                    if (shaping.LastTarget != nearTargetArray[i].entity)
+                    {
+                        shaping.PrevPhi = result.currentPhi;
+                        shaping.LastTarget = nearTargetArray[i].entity;
+                    }
+                    else
+                    {
+                        shaping.PrevPhi = result.currentPhi;  // isOutOfPerception 여부 상관없이 항상 갱신
+                    }
+
+                    em.SetComponentData(entities[i], shaping);
+                }
 
                 var obs = result.obs;
 

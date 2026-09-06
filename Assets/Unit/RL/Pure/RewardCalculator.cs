@@ -8,7 +8,7 @@ public struct PhiConfig
     public float EdgePenalty;
     [Tooltip("delta에 곱할 weight")]
     public float DeltaWeight;
-    [Tooltip("생존 보너스 (매 스텝)")]
+    [Tooltip("생존 보너스 (매 스텝) - 0으로 두었을 때 특정 액션 고착 문제 해소됨을 확인")]
     public float AliveBonus;
     [Tooltip("사망 페널티")]
     public float DeathPenalty;
@@ -17,7 +17,7 @@ public struct PhiConfig
     {
         EdgePenalty = 0.3f,
         DeltaWeight = 5.0f,
-        AliveBonus = 0.05f,
+        AliveBonus = 0f,
         DeathPenalty = -0.3f,
     };
 }
@@ -63,8 +63,6 @@ public static class RewardCalculator
         score += parm.targetHp * 1.0f;
 
         parm.reward = score;
-
-        Debug.Log($"unit={parm.unit_id}, delta={parm.delta}, selfHp={parm.selfHp}, targetHp={parm.targetHp}, aliveTerm={(parm.alive==1?Config.AliveBonus:Config.DeathPenalty)}, totalScore={parm.reward}");
         return parm;
     }
 }

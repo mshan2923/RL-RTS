@@ -54,4 +54,5 @@ public struct CNearTarget : IComponentData
 public struct CRLShaping : IComponentData
 {
     public float PrevPhi;
+    public Entity LastTarget;
 }

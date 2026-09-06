@@ -107,9 +107,18 @@ public partial class SpatialGridSystem : SystemBase
                 }
             }
 
+            // SpatialGridSystem.FindJob에서, 인지거리 안에서 못 찾았을 때
             if (closest == Entity.Null)
             {
-                // 랜덤 폴백 제거 - 그냥 없는 채로 둠
+                // 인지거리 밖이어도 "전체 맵에서 가장 가까운 적"은 타겟으로 유지 (isOutOfPerception=true로 계속 표시됨)
+                var opponents = unitEnum.type == UnitEnum.Ally ? EnemyEntities : AllyEntities;
+                float minDist = float.MaxValue;
+                for (int i = 0; i < opponents.Length; i++)
+                {
+                    if (!transLookup.HasComponent(opponents[i])) continue;
+                    float d = math.distancesq(transform.Position, transLookup[opponents[i]].Position);
+                    if (d < minDist) { minDist = d; closest = opponents[i]; }
+                }
             }
 
             nearTarget = new CNearTarget { entity = closest }; // closest가 Null이면 그대로 Null

@@ -76,7 +76,7 @@ public static class ObservationBuilder
         var dxy = (targetPos - selfPos) / detectDistance;
         var attackDistNormalized = math.length((targetPos - selfPos) / attackDistance);
 
-        // 인지거리~공격거리~0 세 구간 기준으로 phi 계산
+        // 공격성(AttackTendency)이 phi의 목표 거리 자체를 이동시킴 -> 높으면 근접, 낮으면 후퇴 위치 유지
         float currentPhi = RewardCalculator.ComputePhi(actualDist, detectDistance, attackDistance, distToEdge);
         float delta = currentPhi - shaping.PrevPhi;
 

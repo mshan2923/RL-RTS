@@ -97,13 +97,12 @@ partial struct RLAttackSystem : ISystem
             
             var targetTransform = transformLookup[near.entity];
 
-            if(math.distance(localTransform.Position, targetTransform.Position) > unitParm.AttackDistance)
+            if(math.distance(localTransform.Position, targetTransform.Position) > unitParm.AttackDistance)//? 
                 return;
 
             if (near.entity != Entity.Null && hpLookup.HasComponent(near.entity))
             {
                 var targetHp = hpLookup[near.entity];
-                targetHp.Prev = targetHp.Current;//? RLRunner에서 변경값 제거
                 targetHp.Current -= unitParm.Damage;
                 ecb.SetComponent(index, near.entity, targetHp);
             }

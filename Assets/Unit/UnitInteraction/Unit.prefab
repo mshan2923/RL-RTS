@@ -129,7 +129,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Unit
   Id: 0
-  Health: 10
+  Health: 3
   Damage: 1
   FireRate: 1
 --- !u!114 &2078950388863018902
