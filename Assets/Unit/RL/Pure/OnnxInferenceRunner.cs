@@ -26,7 +26,7 @@ public class OnnxInferenceRunner<action> where action : Enum
     public void Infer(NativeArray<CObservation> obsArray, NativeArray<CActionData> actionArray)
     {
         int count = obsArray.Length;
-        int obsDim = RLConstants.OBS_DIM; // dx, dy, delta, selfHp, targetHp, InAttackRange, distToEdge
+        int obsDim = RLConstants.OBS_DIM; // dx, dy, selfHp, targetHp, InAttackRange, distToEdge , AttackTendency(추가)
 
         // obs를 입력 텐서로 변환
         using var inputTensor = new Tensor<float>(new TensorShape(count, obsDim));
@@ -40,6 +40,7 @@ public class OnnxInferenceRunner<action> where action : Enum
             inputTensor[i, 4] = o.targetHp;
             inputTensor[i, 5] = o.InAttackRange;
             inputTensor[i, 6] = o.distToEdge;
+            inputTensor[i, 7] = o.AttackTendency;
         }
 
         worker.Schedule(inputTensor);
@@ -83,6 +84,7 @@ public class OnnxInferenceRunner<action> where action : Enum
             inputTensor[i, 4] = o.targetHp;
             inputTensor[i, 5] = o.InAttackRange;
             inputTensor[i, 6] = o.distToEdge;
+            inputTensor[i, 7] = o.AttackTendency;
         }
 
         worker.Schedule(inputTensor);
