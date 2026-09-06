@@ -27,37 +27,47 @@ public static class RewardCalculator
     public static PhiConfig Config = PhiConfig.Default;
 
     // 4개 고정점만 정의: 0(완전근접,-1) -> attackDistance(최적,0) -> detectDistance(경계,-1) -> 그 이상(고정,-1)
-    public static float ComputePhi(float actualDist, float detectDistance, float attackDistance, float distToEdge)
+    public static float ComputePhi(
+        float actualDist,
+        float desiredDistance,
+        float detectDistance,
+        float distToEdge)
     {
-        const float PHI_ZERO = -1f;
-        const float PHI_BEST = 0f;
-        const float PHI_EDGE = -1f;
+        const float DEAD_ZONE = 0.2f;
 
-        float distPhi;
-        if (actualDist <= attackDistance)
-        {
-            float t = actualDist / math.max(attackDistance, 0.0001f);
-            distPhi = math.lerp(PHI_ZERO, PHI_BEST, math.saturate(t));
-        }
-        else
-        {
-            float t = (actualDist - attackDistance) / math.max(detectDistance - attackDistance, 0.0001f);
-            distPhi = math.lerp(PHI_BEST, PHI_EDGE, math.saturate(t));
-        }
+        float error =
+            math.max(
+                math.abs(actualDist - desiredDistance) - DEAD_ZONE,
+                0f);
 
-        float edgePhi = (distToEdge - 1f) * Config.EdgePenalty;
-        return distPhi + edgePhi;
+        float normalizer =
+            math.max(
+                math.max(detectDistance, desiredDistance),
+                0.0001f);
+
+        float normalizedError =
+            error / normalizer;
+
+        // 목표거리에서 0, 멀어질수록 부드럽게 감소
+        float distancePhi =
+            -normalizedError * normalizedError;
+
+        float edgePhi =
+            (distToEdge - 1f) * Config.EdgePenalty;
+
+        return distancePhi + edgePhi;
     }
 
-    public static CObservation Apply(CObservation parm, bool isOutOfPerception, float attackDistNormalized)
+    public static CObservation Apply(
+        CObservation parm,
+        bool isOutOfPerception,
+        float distanceNormalized,
+        float desiredDistanceNormalized)
     {
-        if (isOutOfPerception)
-        {
-            parm.reward = (parm.delta * Config.DeltaWeight) - 0.01f;
-            return parm;
-        }
-
         float score = parm.delta * Config.DeltaWeight;
+        if (isOutOfPerception)
+            score -= 0.01f;
+
         score += parm.alive == 1 ? 0 : Config.DeathPenalty;
         score += -parm.selfHp * 1.0f;
         score += parm.targetHp * 1.0f;

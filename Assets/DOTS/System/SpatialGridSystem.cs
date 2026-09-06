@@ -29,7 +29,7 @@ public partial class SpatialGridSystem : SystemBase
     {
         Grid.Clear();
 
-        var unitParamMap = new NativeHashMap<UnitEnumComponent, CUnitParams>(4, Allocator.TempJob);
+        var unitParamMap = new NativeHashMap<UnitEnumComponent, CUnitParams>(2, Allocator.TempJob);
         DOTS_Mecro.GetUnitParm(unitParmQuery, ref unitParamMap);
 
         var allyEntities = DOTS_Mecro.GetTeamEntities(EntityManager, UnitEnum.Ally, Allocator.TempJob);

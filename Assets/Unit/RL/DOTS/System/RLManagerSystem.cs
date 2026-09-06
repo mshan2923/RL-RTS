@@ -13,7 +13,7 @@ partial struct RLManagerSystem : ISystem
     public void OnCreate(ref SystemState state)
     {
         using var RequestBuild = new EntityQueryBuilder(Allocator.Temp);
-        RequestBuild.WithAll<RLParmCompoenent, UnitEnumComponent, CHealth, CUnitParams>();
+        RequestBuild.WithAll<RLParmCompoenent, UnitEnumComponent, CHealth>();
         RequestQuery = RequestBuild.Build(ref state);   
 
         // using var ManagerBuild = new EntityQueryBuilder(Allocator.Temp);
@@ -61,7 +61,7 @@ partial struct RLManagerSystem : ISystem
         public EntityCommandBuffer.ParallelWriter ecb;
         public CUnitPrefab unitPrefab;
         public Unity.Mathematics.Random random;
-        public void Execute([EntityIndexInQuery]int index, Entity entity, in RLParmCompoenent rLParm, in UnitEnumComponent unitEnum, in CHealth health, in CUnitParams unitParams)
+        public void Execute([EntityIndexInQuery]int index, Entity entity, in RLParmCompoenent rLParm, in UnitEnumComponent unitEnum, in CHealth health)
         {
             Entity prefabEntity = Entity.Null;
             switch (unitEnum.type)

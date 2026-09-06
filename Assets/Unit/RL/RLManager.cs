@@ -80,6 +80,7 @@ public class RLManager : MonoBehaviour
             {
                 Damage = data.Damager,
                 FireRate = data.FireRate,
+                MaxHealth = data.Health,
                 DetectDistance = data.DetectDistance,
                 AttackDistance = data.AttackDistance,
                 AttackTendency = data.AttackTendency

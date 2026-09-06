@@ -33,10 +33,12 @@ public struct CActionCooldown : IBufferElementData
     public float MaxTime;
 }
 
+
 public struct CUnitParams : IComponentData
 {
     public float Damage;
     public float FireRate;
+    public float MaxHealth;
     public float DetectDistance;
     public float AttackDistance;
     public float AttackTendency;
@@ -56,3 +58,8 @@ public struct CRLShaping : IComponentData
     public float PrevPhi;
     public Entity LastTarget;
 }
+
+  public struct CAttackTendency : IComponentData
+  {
+      public float Value;
+  }
