@@ -144,7 +144,8 @@ const int DebugLogInterval = 30;
                 // 기존 entities 배열 그대로 전달
                 ApplyActions(entities, count);
 
-                LogRlSnapshot(entities, count);
+                if (LogInferenceOutputs)
+                    LogRlSnapshot(entities, count);
             }
 
             entities.Dispose();

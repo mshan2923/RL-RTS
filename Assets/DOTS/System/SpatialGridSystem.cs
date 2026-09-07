@@ -11,12 +11,15 @@ public partial class SpatialGridSystem : SystemBase
 {
     public NativeParallelMultiHashMap<int2, Entity> Grid;
     public EntityQuery unitParmQuery;
+    public EntityQuery UnitQuery;
 
     protected override void OnCreate()
     {
-        int unitCapital = 1024;
-        Grid = new NativeParallelMultiHashMap<int2, Entity>(unitCapital, Allocator.Persistent);
         unitParmQuery = DOTS_Mecro.UnitParmQuery(EntityManager);
+
+
+        using var build = new EntityQueryBuilder(Allocator.Temp);
+        UnitQuery = build.WithAll<UnitComponent>().Build(EntityManager);
     }
 
     protected override void OnDestroy()
@@ -27,6 +30,14 @@ public partial class SpatialGridSystem : SystemBase
     [BurstCompile]
     protected override void OnUpdate()
     {
+        if (UnitQuery.CalculateEntityCount() == 0 ) return;
+
+        if (Grid.IsCreated == false)
+        {
+            Debug.Log($"[SpatialGridSystem] Grid is not created. Creating new grid. -> {UnitQuery.CalculateEntityCount()}");
+            Grid = new NativeParallelMultiHashMap<int2, Entity>(UnitQuery.CalculateEntityCount(), Allocator.Persistent);
+        }
+
         Grid.Clear();
 
         var unitParamMap = new NativeHashMap<UnitEnumComponent, CUnitParams>(2, Allocator.TempJob);
@@ -54,6 +65,7 @@ public partial class SpatialGridSystem : SystemBase
         enemyEntities.Dispose(Dependency);
     }
 
+    [BurstCompile]
     partial struct AddJob : IJobEntity
     {
         public NativeParallelMultiHashMap<int2, Entity>.ParallelWriter Grid;
@@ -64,6 +76,7 @@ public partial class SpatialGridSystem : SystemBase
             Grid.Add(coord, entity);
         }
     }
+
 
     [BurstCompile]
     partial struct FindJob : IJobEntity
@@ -79,38 +92,13 @@ public partial class SpatialGridSystem : SystemBase
 
         public void Execute([EntityIndexInQuery] int index, Entity entity, in LocalTransform transform, in UnitComponent unit, in UnitEnumComponent unitEnum, ref CNearTarget nearTarget)
         {
-            using var result = new NativeList<Entity>(Allocator.Temp);
             parmMap.TryGetValue(unitEnum, out var unitParams);
 
-            // 팀 정보를 넘겨주어 "적"을 발견할 때까지 탐색하도록 변경
-            FindNearbyEnemies(Grid, TeamLookup, unitEnum.type, transform.Position, unitParams.DetectDistance, result, entity);
+            Entity closest = FindNearestEnemy(Grid, TeamLookup, transLookup, unitEnum.type, transform.Position, unitParams.DetectDistance, entity);
 
-            Entity closest = Entity.Null;
-            float closestDist = float.MaxValue;
-
-            for (int t = 0; t < result.Length; t++)
-            {
-                var candidate = result[t];
-                if (candidate == entity) continue;
-
-                // 적 팀만 필터링하여 최단 거리 비교
-                if (TeamLookup.HasComponent(candidate) && unitEnum.type != TeamLookup.GetRefRO(candidate).ValueRO.type)
-                {
-                    var candidatePos = transLookup.GetRefRO(candidate).ValueRO.Position;
-                    float dist = math.distancesq(transform.Position, candidatePos);
-
-                    if (dist < closestDist)
-                    {
-                        closestDist = dist;
-                        closest = candidate;
-                    }
-                }
-            }
-
-            // SpatialGridSystem.FindJob에서, 인지거리 안에서 못 찾았을 때
+            // 인지거리 안에서 못 찾았을 때: 전체 맵에서 가장 가까운 적으로 폴백 (isOutOfPerception=true로 계속 표시됨)
             if (closest == Entity.Null)
             {
-                // 인지거리 밖이어도 "전체 맵에서 가장 가까운 적"은 타겟으로 유지 (isOutOfPerception=true로 계속 표시됨)
                 var opponents = unitEnum.type == UnitEnum.Ally ? EnemyEntities : AllyEntities;
                 float minDist = float.MaxValue;
                 for (int i = 0; i < opponents.Length; i++)
@@ -121,60 +109,94 @@ public partial class SpatialGridSystem : SystemBase
                 }
             }
 
-            nearTarget = new CNearTarget { entity = closest }; // closest가 Null이면 그대로 Null
+            nearTarget = new CNearTarget { entity = closest };
         }
-    }
 
-    public static void FindNearbyEnemies(
-        NativeParallelMultiHashMap<int2, Entity>.ReadOnly grid,
-        ComponentLookup<UnitEnumComponent> teamLookup,
-        UnitEnum selfTeamType,
-        float3 centerPos, float radius,
-        NativeList<Entity> result,
-        Entity self)
-    {
-        var centerCoord = HexMetrics.WorldToOffset(centerPos);
-        int maxRadius = (int)(radius / HexMetrics.outerRadius);
-
-        using var visited = new NativeHashSet<Entity>(16, Allocator.Temp);
-
-        for (int r = 0; r <= maxRadius; r++)
+        /// <summary>
+        /// 링(반경) 단위로 그리드를 탐색하면서, 적 팀 엔티티를 만나는 즉시 최근접 갱신까지 끝낸다.
+        /// 기존처럼 NativeList에 후보를 모았다가 다시 순회하지 않는다 (이중 순회 제거).
+        /// 적을 한 명이라도 찾은 반경에서 탐색을 종료한다 (기존 동작과 동일).
+        /// </summary>
+        static Entity FindNearestEnemy(
+            NativeParallelMultiHashMap<int2, Entity>.ReadOnly grid,
+            ComponentLookup<UnitEnumComponent> teamLookup,
+            ComponentLookup<LocalTransform> transLookup,
+            UnitEnum selfTeamType,
+            float3 centerPos, float radius,
+            Entity self)
         {
-            int countBeforeRing = result.Length;
+            var centerCoord = HexMetrics.WorldToOffset(centerPos);
+            int maxRadius = (int)(radius / HexMetrics.outerRadius);
 
-            // 특정 반경 r 범위의 셀 수집
-            for (int q = -r; q <= r; q++)
+            using var visited = new NativeHashSet<Entity>(16, Allocator.Temp);
+
+            Entity closest = Entity.Null;
+            float closestDist = float.MaxValue;
+
+            for (int r = 0; r <= maxRadius; r++)
             {
-                int r1 = math.max(-r, -q - r);
-                int r2 = math.min(r, -q + r);
+                bool foundEnemyInThisRadius = false;
 
-                if (q == -r || q == r)
+                for (int q = -r; q <= r; q++)
                 {
-                    for (int rIdx = r1; rIdx <= r2; rIdx++)
-                        TryAdd(grid, centerCoord + new int2(q, rIdx), visited, result);
+                    int r1 = math.max(-r, -q - r);
+                    int r2 = math.min(r, -q + r);
+
+                    if (q == -r || q == r)
+                    {
+                        for (int rIdx = r1; rIdx <= r2; rIdx++)
+                        {
+                            CheckCell(grid, centerCoord + new int2(q, rIdx), self, selfTeamType,
+                                teamLookup, transLookup, visited, centerPos,
+                                ref closest, ref closestDist, ref foundEnemyInThisRadius);
+                        }
+                    }
+                    else
+                    {
+                        CheckCell(grid, centerCoord + new int2(q, r1), self, selfTeamType,
+                            teamLookup, transLookup, visited, centerPos,
+                            ref closest, ref closestDist, ref foundEnemyInThisRadius);
+                        if (r2 != r1)
+                        {
+                            CheckCell(grid, centerCoord + new int2(q, r2), self, selfTeamType,
+                                teamLookup, transLookup, visited, centerPos,
+                                ref closest, ref closestDist, ref foundEnemyInThisRadius);
+                        }
+                    }
                 }
-                else
-                {
-                    TryAdd(grid, centerCoord + new int2(q, r1), visited, result);
-                    if (r2 != r1)
-                        TryAdd(grid, centerCoord + new int2(q, r2), visited, result);
-                }
+
+                // 이번 반경에서 적을 하나라도 찾았으면 더 먼 반경은 보지 않고 종료 (기존과 동일한 동작)
+                if (foundEnemyInThisRadius) return closest;
             }
 
-            // 이번 반경(r) 내에 '적 유닛'이 한 명이라도 수집되었는지 확인
-            bool foundEnemyInThisRadius = false;
-            for (int i = countBeforeRing; i < result.Length; i++)
+            return closest;
+        }
+
+        static void CheckCell(
+            NativeParallelMultiHashMap<int2, Entity>.ReadOnly grid,
+            int2 coord, Entity self, UnitEnum selfTeamType,
+            ComponentLookup<UnitEnumComponent> teamLookup,
+            ComponentLookup<LocalTransform> transLookup,
+            NativeHashSet<Entity> visited, float3 centerPos,
+            ref Entity closest, ref float closestDist, ref bool foundEnemyInThisRadius)
+        {
+            if (!grid.TryGetFirstValue(coord, out var e, out var it)) return;
+
+            do
             {
-                Entity e = result[i];
-                if (e != self && teamLookup.HasComponent(e) && teamLookup[e].type != selfTeamType)
+                if (e == self || !visited.Add(e)) continue;
+                if (!teamLookup.HasComponent(e) || teamLookup[e].type == selfTeamType) continue;
+
+                foundEnemyInThisRadius = true;
+
+                float d = math.distancesq(centerPos, transLookup[e].Position);
+                if (d < closestDist)
                 {
-                    foundEnemyInThisRadius = true;
-                    break;
+                    closestDist = d;
+                    closest = e;
                 }
             }
-
-            // 적을 찾았다면 해당 반경까지의 엔티티만 가진 채 종료 (더 먼 반경은 안 뒤짐)
-            if (foundEnemyInThisRadius) return;
+            while (grid.TryGetNextValue(out e, ref it));
         }
     }
 

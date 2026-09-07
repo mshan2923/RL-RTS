@@ -132,16 +132,6 @@ public static class ObservationBuilder
             distToEdge);
         float delta = currentPhi - shaping.PrevPhi;
 
-        if (unitIndex == 0)
-        {
-            Debug.Log(
-                $"[PHI] actual={actualDist:F2}, " +
-                $"desired={desiredDistance:F2}, " +
-                $"phi={currentPhi:F3}, " +
-                $"prev={shaping.PrevPhi:F3}, " +
-                $"delta={delta:F3}, " +
-                $"tendency={attackTendency:F2}");
-        }
 
         float selfMax = math.max(selfHealth.Max, 1f);
         float targetMax = math.max(targetHealth.Max, 1f);

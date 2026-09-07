@@ -152,8 +152,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Map
   HexPrefab: {fileID: 955035875119155639, guid: 8099a23da3505094fa8f756e10416c59, type: 3}
-  Width: 20
-  Height: 20
+  Width: 40
+  Height: 40
 --- !u!4 &1255320370
 Transform:
   m_ObjectHideFlags: 0
